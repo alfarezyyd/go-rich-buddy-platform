@@ -1,2 +1,2 @@
-# go-rich-buddy-api
+# go-rich-buddy-platform
 Rich Buddy API
