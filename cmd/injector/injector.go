@@ -1,7 +1,11 @@
 package injector
 
 import (
+	"go-rich-buddy-platform/client"
 	"go-rich-buddy-platform/config"
+	"go-rich-buddy-platform/internal/agent"
+	"go-rich-buddy-platform/internal/tool"
+	"go-rich-buddy-platform/internal/tool/sectors"
 	"go-rich-buddy-platform/internal/user"
 	validatorService "go-rich-buddy-platform/internal/validator"
 	"go-rich-buddy-platform/pkg/exception"
@@ -91,6 +95,8 @@ var CoreModule = fx.Module("coreModule", fx.Provide(
 	NewGinEngine,
 	InitRedisConfig,
 	NewRedisInstance,
+	config.NewRestyConfig,
+	config.NewRestyModule,
 ))
 
 var ApplicationRoutesModule = fx.Module("applicationRoutes",
@@ -98,13 +104,15 @@ var ApplicationRoutesModule = fx.Module("applicationRoutes",
 		routes.NewPublicRoutes,
 		routes.NewAuthenticationRoutes,
 		routes.NewProtectedRoutes,
+		routes.NewAgentRoutes,
 		func(
 			ginEngine *gin.Engine,
 			publicRoutes *routes.PublicRoutes,
 			authenticationRoutes *routes.AuthenticationRoutes,
 			protectedRoutes *routes.ProtectedRoutes,
+			agentRoutes *routes.AgentRoutes,
 		) *routes.ApplicationRoutes {
-			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes)
+			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes)
 		},
 	),
 	fx.Invoke(func(applicationRoutes *routes.ApplicationRoutes) {
@@ -120,4 +128,31 @@ var UserModule = fx.Module("userFeature",
 
 var ValidatorModule = fx.Module("validatorFeature",
 	fx.Provide(fx.Annotate(validatorService.NewService, fx.As(new(validatorService.Service)))),
+)
+
+func NewToolRegistry(restyModule *config.RestyModule) tool.Registry {
+	toolRegistry := tool.NewRegistry()
+	toolRegistry.RegisterAll(sectors.ProvideSectorsTools(restyModule.GetRestySectors())...)
+	return toolRegistry
+}
+
+func NewAgentClient(viperConfig *viper.Viper) client.AgentClient {
+	baseURL := viperConfig.GetString("AGENT_BASE_URL")
+	apiKey := viperConfig.GetString("AGENT_APIKEY")
+	return client.NewAgentClient(baseURL, apiKey)
+}
+
+var ToolModule = fx.Module("toolFeature",
+	fx.Provide(
+		NewToolRegistry,
+	),
+)
+
+var AgentModule = fx.Module("agentFeature",
+	fx.Provide(
+		NewAgentClient,
+		fx.Annotate(agent.NewClassifier, fx.As(new(agent.Classifier))),
+		fx.Annotate(agent.NewService, fx.As(new(agent.Service))),
+		fx.Annotate(agent.NewHandler, fx.As(new(agent.Controller))),
+	),
 )

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/spf13/viper"
 )
 
 type HttpTarget struct {
@@ -16,24 +17,46 @@ type RestyConfig struct {
 	RetryWaitTime    time.Duration
 	RetryMaxWaitTime time.Duration
 	Timeout          time.Duration
-	NineRouter       HttpTarget
+	AgentRouter      HttpTarget
 	Sectors          HttpTarget
 }
 
 type RestyModule struct {
 	restyConfig          *RestyConfig
-	restyNineRouter      *resty.Client
+	restyAgentRouter     *resty.Client
 	restyWhatsappGateway *resty.Client
 	restySectors         *resty.Client
+}
+
+func NewRestyConfig(viperConfig *viper.Viper) *RestyConfig {
+	agentRouterEndpoint := viperConfig.GetString("AGENT_BASE_URL")
+	agentRouterAuthToken := viperConfig.GetString("AGENT_APIKEY")
+	sectorsEndpoint := viperConfig.GetString("SECTORS_API_URL")
+	sectorsAuthToken := viperConfig.GetString("SECTORS_API_KEY")
+
+	return &RestyConfig{
+		RetryCount:       3,
+		RetryWaitTime:    100 * time.Millisecond,
+		RetryMaxWaitTime: 2 * time.Second,
+		Timeout:          30 * time.Second,
+		AgentRouter: HttpTarget{
+			Endpoint:  agentRouterEndpoint,
+			AuthToken: agentRouterAuthToken,
+		},
+		Sectors: HttpTarget{
+			Endpoint:  sectorsEndpoint,
+			AuthToken: sectorsAuthToken,
+		},
+	}
 }
 
 func NewRestyModule(restyConfig *RestyConfig) *RestyModule {
 	restyModule := &RestyModule{
 		restyConfig: restyConfig,
 	}
-	restyModule.restyNineRouter = restyModule.getBaseResty().
-		SetBaseURL("http://localhost:20128/v1").
-		SetAuthToken("sk-16919f52ba2b8bd0-0ydrw1-fd953f4b")
+	restyModule.restyAgentRouter = restyModule.getBaseResty().
+		SetBaseURL(restyConfig.AgentRouter.Endpoint).
+		SetAuthToken(restyConfig.AgentRouter.AuthToken)
 
 	restyModule.restyWhatsappGateway = restyModule.getBaseResty().
 		SetBaseURL("http://localhost:3000").
@@ -51,8 +74,8 @@ func (restyModule *RestyModule) getBaseResty() *resty.Client {
 		SetRetryCount(restyModule.restyConfig.RetryCount)
 }
 
-func (restyModule *RestyModule) GetRestyNineRouter() *resty.Client {
-	return restyModule.restyNineRouter
+func (restyModule *RestyModule) GetRestyAgentRouter() *resty.Client {
+	return restyModule.restyAgentRouter
 }
 
 func (restyModule *RestyModule) GetRestyWhatsappGateway() *resty.Client {

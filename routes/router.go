@@ -6,27 +6,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ApplicationRoutes holds all route groups
 type ApplicationRoutes struct {
+	ginEngine            *gin.Engine
 	RouterGroup          *gin.RouterGroup
 	PublicRoutes         *PublicRoutes
 	AuthenticationRoutes *AuthenticationRoutes
 	ProtectedRoutes      *ProtectedRoutes
-	// Add other route groups here
+	AgentRoutes          *AgentRoutes
 }
 
 func NewApplicationRoutes(
 	ginEngine *gin.Engine,
 	publicRoutes *PublicRoutes,
 	authenticationRoutes *AuthenticationRoutes,
-	protectedRoutes *ProtectedRoutes) *ApplicationRoutes {
+	protectedRoutes *ProtectedRoutes,
+	agentRoutes *AgentRoutes) *ApplicationRoutes {
 	parentRouterGroup := ginEngine.Group("/api/")
 	parentRouterGroup.Use(middleware.RequestMetaMiddleware())
 	return &ApplicationRoutes{
+		ginEngine:            ginEngine,
 		RouterGroup:          parentRouterGroup,
 		PublicRoutes:         publicRoutes,
 		AuthenticationRoutes: authenticationRoutes,
 		ProtectedRoutes:      protectedRoutes,
+		AgentRoutes:          agentRoutes,
 	}
 }
 
@@ -39,5 +42,9 @@ func (applicationRoutes *ApplicationRoutes) Setup() {
 	}
 	if applicationRoutes.ProtectedRoutes != nil {
 		applicationRoutes.ProtectedRoutes.Setup(applicationRoutes.RouterGroup)
+	}
+	if applicationRoutes.AgentRoutes != nil {
+		applicationRoutes.AgentRoutes.Setup(applicationRoutes.RouterGroup)
+		applicationRoutes.AgentRoutes.SetupRoot(applicationRoutes.ginEngine)
 	}
 }

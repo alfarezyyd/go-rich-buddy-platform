@@ -37,6 +37,8 @@ func main() {
 		injector.CoreModule,
 		injector.ApplicationRoutesModule,
 		injector.UserModule,
+		injector.ToolModule,
+		injector.AgentModule,
 		injector.ValidatorModule,
 		// Invoker
 		fx.Invoke(Run),
