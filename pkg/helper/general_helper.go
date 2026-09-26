@@ -19,13 +19,11 @@ import (
 func CheckErrorOperation(indicatedError error, applicationError *exception.ApplicationError) bool {
 
 	if errors.Is(indicatedError, context.Canceled) {
-		// client aborted request → ignore / log ringan
 		return false
 	}
 	if indicatedError != nil {
 		logger.Debug(indicatedError)
 		panic(applicationError)
-		return true
 	}
 
 	return false

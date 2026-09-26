@@ -34,17 +34,15 @@ func StringIntoTypeHookFunc(from reflect.Type, to reflect.Type, data interface{}
 		}
 	case reflect.TypeOf(time.Time{}):
 		if str, ok := data.(string); ok {
-			// Trim untuk keamanan input
 			str = strings.TrimSpace(str)
 
 			if str == "" {
 				return time.Time{}, nil
 			}
 
-			// Daftar layout yang diizinkan
 			layouts := []string{
-				"2006-01-02",       // YYYY-MM-DD
-				"2006-01-02 15:04", // YYYY-MM-DD HH:mm
+				"2006-01-02",
+				"2006-01-02 15:04",
 			}
 
 			var parsed time.Time
@@ -63,7 +61,6 @@ func StringIntoTypeHookFunc(from reflect.Type, to reflect.Type, data interface{}
 		if str, ok := data.(string); ok {
 			str = strings.TrimSpace(str)
 
-			// 👉 kalau kosong → return nil
 			if str == "" {
 				return nil, nil
 			}
@@ -76,7 +73,7 @@ func StringIntoTypeHookFunc(from reflect.Type, to reflect.Type, data interface{}
 			for _, layout := range layouts {
 				parsed, err := time.Parse(layout, str)
 				if err == nil {
-					return &parsed, nil // 👉 return pointer
+					return &parsed, nil
 				}
 			}
 
@@ -89,7 +86,6 @@ func StringIntoTypeHookFunc(from reflect.Type, to reflect.Type, data interface{}
 
 func PointerDecodeHookFunc() mapstructure.DecodeHookFunc {
 	return func(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
-		// 1. Handle nil data
 		if data == nil {
 			if t.Kind() == reflect.Ptr {
 				return nil, nil
@@ -97,13 +93,11 @@ func PointerDecodeHookFunc() mapstructure.DecodeHookFunc {
 			return data, nil
 		}
 
-		// 2. Dereference pointer source jika perlu
 		dataValue := reflect.ValueOf(data)
 		if !dataValue.IsValid() {
 			return nil, nil
 		}
 
-		// Handle pointer-to-pointer atau pointer-to-struct
 		if dataValue.Kind() == reflect.Ptr {
 			if dataValue.IsNil() {
 				if t.Kind() == reflect.Ptr {
@@ -112,24 +106,18 @@ func PointerDecodeHookFunc() mapstructure.DecodeHookFunc {
 				return data, nil
 			}
 
-			// PENTING: Jika target juga pointer dan source adalah pointer ke struct
-			// Biarkan mapstructure handle nested decoding
 			if t.Kind() == reflect.Ptr && dataValue.Elem().Kind() == reflect.Struct {
-				// Jangan return langsung, biarkan mapstructure decode field by field
 				return data, nil
 			}
 		}
 
-		// 3. Handle zero value struct -> nil pointer
 		if t.Kind() == reflect.Ptr && f.Kind() == reflect.Struct {
 			if dataValue.IsValid() && dataValue.IsZero() {
 				return nil, nil
 			}
 		}
 
-		// 4. Handle map to struct (untuk nested objects)
 		if f.Kind() == reflect.Map && t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
-			// Biarkan mapstructure handle conversion
 			return data, nil
 		}
 
@@ -212,13 +200,12 @@ func MapEntityIntoResponseWithIgnoredFields[S any, R any](
 	decoded := DecodeFromSource[S, R](entityObject, responseObject)
 	responseObject = decoded
 
-	// Remove fields if necessary
 	if len(ignoredFields) > 0 {
 		removeIgnoredFields(responseObject, ignoredFields)
 	}
 	if len(renderPayloads) > 0 {
 		for _, renderPayload := range renderPayloads {
-			if renderPayload == nil { // <-- cegah panic
+			if renderPayload == nil {
 				continue
 			}
 			renderPayload(entityObject, responseObject)

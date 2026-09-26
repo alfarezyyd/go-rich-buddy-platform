@@ -14,7 +14,6 @@ func NewPublicRoutes(routerGroup *gin.RouterGroup) *PublicRoutes {
 func (publicRoutes *PublicRoutes) Setup(routerGroup *gin.RouterGroup) {
 	publicRouterGroup := routerGroup.Group("/public")
 
-	// Serve static files from "./uploads"
 	publicRouterGroup.Static("/uploads", "./uploads")
 
 }

@@ -20,11 +20,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// InitializeValidator setup validator instance dengan semua custom validation
 func InitializeValidator(dbConnection *gorm.DB) (*validator.Validate, ut.Translator) {
 	validate := validator.New()
 
-	// Use form/json tag for names instead of struct field names
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		name := fld.Tag.Get("form")
 		if name == "" {
@@ -37,15 +35,11 @@ func InitializeValidator(dbConnection *gorm.DB) (*validator.Validate, ut.Transla
 		return name
 	})
 
-	// Universal Translator
 	english := en.New()
 	uni := ut.New(english, english)
 	trans, _ := uni.GetTranslator("en")
 	_ = engTranslation.RegisterDefaultTranslations(validate, trans)
 
-	// ======================
-	// Register custom validators
-	// ======================
 	validate.RegisterValidation("maxSize", fileSizeValidator)
 	validate.RegisterValidation("fileExtension", fileExtensionValidator)
 	validate.RegisterValidation("requiredFile", requiredFileValidator)
@@ -58,18 +52,11 @@ func InitializeValidator(dbConnection *gorm.DB) (*validator.Validate, ut.Transla
 	validate.RegisterValidation("datetime", dateValidator("2006-01-02 15:04"))
 	validate.RegisterValidation("time", timeValidator("15:04"))
 	validate.RegisterValidation("matchPassword", matchPasswordValidator(dbConnection))
-
-	// ======================
-	// Register translations
-	// ======================
 	registerTranslations(validate, trans)
 
 	return validate, trans
 }
 
-// ======================
-// Translations
-// ======================
 func registerTranslations(validate *validator.Validate, trans ut.Translator) {
 	type translation struct {
 		tag     string
@@ -159,14 +146,11 @@ func registerTranslations(validate *validator.Validate, trans ut.Translator) {
 	}
 }
 
-// ======================
-// Validators
-// ======================
 func uniqueValidator(db *gorm.DB) validator.Func {
 	return func(fl validator.FieldLevel) bool {
 		val := fl.Field().String()
 		params := strings.Split(fl.Param(), ";")
-		if len(params) < 2 { // minimal tableName dan columnName
+		if len(params) < 2 {
 			return false
 		}
 
@@ -189,7 +173,6 @@ func uniqueValidator(db *gorm.DB) validator.Func {
 		var count int64
 		query := db.Debug().Table(tableName).Where(fmt.Sprintf("%s = ?", columnName), val)
 
-		// Jika pkField & pkVal valid, tambahkan kondisi exclude record yang sama
 		if pkField != "" && pkVal != nil {
 			query = query.Where(fmt.Sprintf("%s <> ?", helper.ConvertIntoSnakeCase(pkField)), pkVal)
 		}
@@ -226,18 +209,15 @@ func timeValidator(format string) validator.Func {
 	return func(fl validator.FieldLevel) bool {
 		value := fl.Field().String()
 
-		// allow empty value (optional field)
 		if value == "" {
 			return true
 		}
 
-		// strict time validation (HH:mm)
 		parsedTime, err := time.Parse(format, value)
 		if err != nil {
 			return false
 		}
 
-		// enforce exact format (no auto-correction by time.Parse)
 		return parsedTime.Format(format) == value
 	}
 }
@@ -316,19 +296,16 @@ func matchPasswordValidator(dbConnection *gorm.DB) validator.Func {
 	return func(fl validator.FieldLevel) bool {
 		currentPassword := fl.Field().String()
 
-		// ambil struct req sebagai interface
 		requestModel, isValid := fl.Top().Interface().(trait.HasId)
 		if !isValid {
-			return false // struct tidak mendukung HasId
+			return false
 		}
 
-		// ambil user dari DB menggunakan ID
 		var user entity.User
 		if err := dbConnection.First(&user, requestModel.GetId()).Error; err != nil {
 			return false
 		}
 
-		// compare currentPassword == actualPassword (hashed)
 		if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)) != nil {
 			return false
 		}
@@ -337,9 +314,6 @@ func matchPasswordValidator(dbConnection *gorm.DB) validator.Func {
 	}
 }
 
-// ======================
-// Utility
-// ======================
 func formatFieldName(field string) string {
 	if field == "" {
 		return ""

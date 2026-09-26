@@ -79,7 +79,6 @@ func (userService *ServiceImpl) FindSelf(ginContext *gin.Context) *model.UserRes
 	return userResponse
 }
 
-// Create - Membuat user baru
 func (userService *ServiceImpl) Create(ginContext *gin.Context, createUserRequest *model.CreateUserRequest) *model.PaginatedResponse[*model.UserResponse] {
 	userJwtClaims := helper.ExtractJwtClaimFromContext(ginContext)
 	var paginationResp *model.PaginatedResponse[*model.UserResponse]

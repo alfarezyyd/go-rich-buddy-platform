@@ -44,7 +44,6 @@ func NewValidator(gormDatabase *gorm.DB) (*validator.Validate, universalTranslat
 	return config.InitializeValidator(gormDatabase)
 }
 
-// NewViperConfig --- Provider untuk Viper config ---
 func NewViperConfig() *viper.Viper {
 	viperConfig := viper.New()
 	viperConfig.SetConfigFile(".env")
@@ -56,7 +55,6 @@ func NewViperConfig() *viper.Viper {
 	return viperConfig
 }
 
-// NewDatabaseCredentials --- Provider untuk Database Credentials ---
 func NewDatabaseCredentials(viperConfig *viper.Viper) *config.DatabaseCredentials {
 	return &config.DatabaseCredentials{
 		DatabaseHost:     viperConfig.GetString("DATABASE_HOST"),
@@ -67,7 +65,6 @@ func NewDatabaseCredentials(viperConfig *viper.Viper) *config.DatabaseCredential
 	}
 }
 
-// NewGinEngine --- Provider untuk Gin Engine ---
 func NewGinEngine() (*gin.Engine, *gin.RouterGroup) {
 	gin.SetMode(gin.DebugMode)
 	ginEngine := gin.Default()

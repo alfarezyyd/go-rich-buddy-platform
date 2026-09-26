@@ -16,7 +16,6 @@ import (
 
 func AuthMiddleware(viperConfig *viper.Viper, redisConfig *config.RedisInstance) gin.HandlerFunc {
 	return func(ginContext *gin.Context) {
-		// 1. Ambil token dari header
 		authHeader := ginContext.GetHeader("Authorization")
 		apiKeyHeader := ginContext.GetHeader("X-API-HEADER")
 		if authHeader == "" && apiKeyHeader == "" {
@@ -32,7 +31,6 @@ func AuthMiddleware(viperConfig *viper.Viper, redisConfig *config.RedisInstance)
 
 		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
 
-		// 2. Parse token untuk ambil userId
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, http.ErrAbortHandler
@@ -55,11 +53,7 @@ func AuthMiddleware(viperConfig *viper.Viper, redisConfig *config.RedisInstance)
 			return
 		}
 
-		// 3. Ambil token valid dari Redis
-		//userId := int64(claims["id"].(float64)) // asumsi "id" selalu ada
-		//redisKey := fmt.Sprintf("auth:token:%d", userId)
-		//cachedToken, err := redisConfig.RedisClient.Get(context.Background(), redisKey).Result()
-		if err == redis.Nil /* || cachedToken != tokenString */ {
+		if err == redis.Nil {
 			ginContext.JSON(http.StatusUnauthorized, helper.NewErrorResponse("", helper.NewErrorDetail(
 				exception.StatusAuthError, exception.ErrTokenExpiredOrInvalid, nil)))
 			ginContext.Abort()
@@ -72,7 +66,6 @@ func AuthMiddleware(viperConfig *viper.Viper, redisConfig *config.RedisInstance)
 			return
 		}
 
-		// 4. Set claims di context
 		userJwtClaim := helper.MapCreateRequestIntoEntity[jwt.MapClaims, model.JwtClaimRequest](&claims)
 
 		ginContext.Set("claims", userJwtClaim)

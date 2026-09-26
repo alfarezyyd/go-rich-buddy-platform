@@ -1,6 +1,5 @@
 package model
 
-// ResponseContractModel Old response contract
 type ResponseContractModel struct {
 	Status  bool        `json:"status"`
 	Message string      `json:"message"`
@@ -26,7 +25,6 @@ type ResponseContract[T any] struct {
 	Pagination *PaginationMeta `json:"pagination"`
 }
 
-// ErrorDetail berisi detail error
 type ErrorDetail struct {
 	Code    string                 `json:"code"`
 	Message string                 `json:"message"`

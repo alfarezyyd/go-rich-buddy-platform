@@ -33,14 +33,12 @@ func Run(fxLifecycle fx.Lifecycle, ginEngine *gin.Engine, viperConfig *viper.Vip
 func main() {
 
 	fxContainer := fx.New(
-		// Provider
 		injector.CoreModule,
 		injector.ApplicationRoutesModule,
 		injector.UserModule,
 		injector.ToolModule,
 		injector.AgentModule,
 		injector.ValidatorModule,
-		// Invoker
 		fx.Invoke(Run),
 	)
 

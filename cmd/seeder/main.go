@@ -17,7 +17,6 @@ func main() {
 	gormInstance := injector.NewDatabaseConnection(databaseCredential)
 	viper.AutomaticEnv()
 
-	// Read SEEDER env
 	seederEnv := viper.GetString("SEEDER")
 
 	if seederEnv == "" {

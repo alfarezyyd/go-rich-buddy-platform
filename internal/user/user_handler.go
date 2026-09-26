@@ -81,7 +81,7 @@ func (userHandler *Handler) UpdateUser(ginContext *gin.Context) {
 
 func (userHandler *Handler) UpdateProfile(ginContext *gin.Context) {
 	var updateUserProfileRequest model.UpdateUserProfileRequest
-	err := ginContext.Request.ParseMultipartForm(20 << 20) // 32MB maxMemory
+	err := ginContext.Request.ParseMultipartForm(20 << 20)
 	helper.CheckErrorOperation(err, exception.NewApplicationError(http.StatusBadRequest, exception.ErrBadRequest))
 	err = userHandler.formDecoder.Decode(&updateUserProfileRequest, ginContext.Request.PostForm)
 	helper.CheckErrorOperation(err, exception.NewApplicationError(http.StatusBadRequest, exception.ErrBadRequest))

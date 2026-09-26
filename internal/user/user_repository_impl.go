@@ -28,21 +28,17 @@ func (userRepositoryImpl *RepositoryImpl) FindAllPagination(
 	var userEntities []*entity.User
 	var totalItems int64
 
-	// Base query
 	rawQuery := gormTransaction.Model(&entity.User{})
 
-	// Search
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
 		rawQuery = rawQuery.Where("username ILIKE ? OR name ILIKE ? OR email ILIKE ?", searchPattern, searchPattern, searchPattern)
 	}
 
-	// Count first
 	if err := rawQuery.Count(&totalItems).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// Fetch paginated data
 	if err := rawQuery.
 		Order(orderClause).
 		Offset(offsetVal).

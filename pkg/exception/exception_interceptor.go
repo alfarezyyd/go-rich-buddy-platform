@@ -17,7 +17,6 @@ func Interceptor() gin.HandlerFunc {
 				logger.Debug("panic occurred", occurredError)
 				logger.Debug("stack trace:\n" + string(debug.Stack()))
 
-				// Check if it's our custom error
 				if clientError, ok := occurredError.(*ApplicationError); ok {
 					ginContext.AbortWithStatusJSON(
 						clientError.HttpStatusCode,
@@ -36,7 +35,6 @@ func Interceptor() gin.HandlerFunc {
 					return
 				}
 
-				// Unknown error
 				ginContext.AbortWithStatusJSON(
 					http.StatusInternalServerError,
 					model.NewResponseContractModel(false, "Internal server error", nil, nil),

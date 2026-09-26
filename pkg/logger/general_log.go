@@ -35,7 +35,6 @@ func Get() *logrus.Logger {
 	return instance
 }
 
-// Shortcuts
 func Info(args ...interface{})          { Get().Info(args...) }
 func Infof(f string, a ...interface{})  { Get().Infof(f, a...) }
 func Debug(args ...interface{})         { Get().Debug(args...) }

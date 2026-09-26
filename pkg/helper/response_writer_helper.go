@@ -65,7 +65,6 @@ func NewPaginatedResponse[T any](
 	}
 }
 
-// NewPaginatedResponseFromResult helper untuk membuat paginated response dari result query
 func NewPaginatedResponseFromResult[T any](
 	message string,
 	entries []T,

@@ -7,7 +7,6 @@ func RequestMetaMiddleware() gin.HandlerFunc {
 		ipAddress := ginContext.ClientIP()
 		userAgent := ginContext.GetHeader("User-Agent")
 
-		// Simpan ke context
 		ginContext.Set("ipAddress", ipAddress)
 		ginContext.Set("userAgent", userAgent)
 

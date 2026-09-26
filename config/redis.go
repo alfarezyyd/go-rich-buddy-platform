@@ -50,7 +50,6 @@ func InitRedisInstance(redisConfig RedisConfig) (*RedisInstance, error) {
 		DB:       redisConfig.Database,
 	})
 
-	// Test connection
 	if err := redisDatabase.Ping(redisContext).Err(); err != nil {
 		return nil, fmt.Errorf("failed to connect Redis: %w", err)
 	}

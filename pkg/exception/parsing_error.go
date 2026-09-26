@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// PUBLIC FUNCTION
 func ParseGormError(err error, customMessage ...string) *ApplicationError {
 	if err == nil {
 		return nil
@@ -22,27 +21,20 @@ func ParseGormError(err error, customMessage ...string) *ApplicationError {
 		override = customMessage[0]
 	}
 
-	// 1. GORM errors
 	if appErr := parseGormBuiltinError(err, override); appErr != nil {
 		return appErr
 	}
 
-	// 2. PostgreSQL errors
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		return parsePostgresError(pgErr, override)
 	}
 
-	// 3. Fallback
 	return NewApplicationError(
 		http.StatusInternalServerError,
 		getMessage(override, "Database error occurred"),
 	)
 }
-
-//////////////////////////////////////////////////////////////
-//               HANDLE GORM BUILT-IN ERRORS
-//////////////////////////////////////////////////////////////
 
 func parseGormBuiltinError(err error, override string) *ApplicationError {
 	type mapping struct {
@@ -70,12 +62,7 @@ func parseGormBuiltinError(err error, override string) *ApplicationError {
 	return nil
 }
 
-//////////////////////////////////////////////////////////////
-//               HANDLE POSTGRESQL ERRORS
-//////////////////////////////////////////////////////////////
-
 func parsePostgresError(pgErr *pgconn.PgError, override string) *ApplicationError {
-	// Mapping by SQLSTATE code
 	type mapping struct {
 		code       string
 		statusCode int
@@ -84,28 +71,28 @@ func parsePostgresError(pgErr *pgconn.PgError, override string) *ApplicationErro
 
 	maps := []mapping{
 		{
-			code:       "23505", // unique violation
+			code:       "23505",
 			statusCode: http.StatusConflict,
 			generator: func(e *pgconn.PgError) string {
 				return autoMessageFromConstraint(e.ConstraintName, "Duplicate entry")
 			},
 		},
 		{
-			code:       "23503", // FK violation
+			code:       "23503",
 			statusCode: http.StatusBadRequest,
 			generator: func(e *pgconn.PgError) string {
 				return autoFKMessage(e)
 			},
 		},
 		{
-			code:       "23514", // check constraint
+			code:       "23514",
 			statusCode: http.StatusBadRequest,
 			generator: func(e *pgconn.PgError) string {
 				return autoMessageFromConstraint(e.ConstraintName, "Check constraint failed")
 			},
 		},
 		{
-			code:       "23502", // not null
+			code:       "23502",
 			statusCode: http.StatusBadRequest,
 			generator: func(e *pgconn.PgError) string {
 				return fmt.Sprintf("%s cannot be null", formatColumnName(e.ColumnName))
@@ -130,7 +117,6 @@ func parsePostgresError(pgErr *pgconn.PgError, override string) *ApplicationErro
 		}
 	}
 
-	// Fallback
 	return &ApplicationError{
 		Message:              getMessage(override, "Database error occurred"),
 		HttpStatusCode:       http.StatusInternalServerError,
@@ -138,11 +124,6 @@ func parsePostgresError(pgErr *pgconn.PgError, override string) *ApplicationErro
 	}
 }
 
-//////////////////////////////////////////////////////////////
-//               UTILITY FUNCTIONS
-//////////////////////////////////////////////////////////////
-
-// override > fallback
 func getMessage(override, fallback string) string {
 	if override != "" {
 		return override
@@ -150,16 +131,11 @@ func getMessage(override, fallback string) string {
 	return fallback
 }
 
-// 🔥 AUTO MESSAGE BASED ON CONSTRAINT NAME
-//
-// users_email_key → "Email already exists"
-// user_profile_id_key → "User profile already exists"
 func autoMessageFromConstraint(constraint, fallback string) string {
 	if constraint == "" {
 		return fallback
 	}
 
-	// Extract column from constraint name
 	r := regexp.MustCompile(`(?:.*_)?(.+?)_(?:key|fkey|unique|idx)$`)
 	match := r.FindStringSubmatch(constraint)
 
@@ -171,9 +147,6 @@ func autoMessageFromConstraint(constraint, fallback string) string {
 	return fmt.Sprintf("%s already exists", column)
 }
 
-// 🔥 AUTO FOREIGN KEY MESSAGE
-//
-// orders_user_id_fkey → "User is not valid"
 func autoFKMessage(pgErr *pgconn.PgError) string {
 	c := pgErr.ConstraintName
 	if c == "" {
