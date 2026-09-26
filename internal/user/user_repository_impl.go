@@ -14,7 +14,7 @@ func NewRepository() *RepositoryImpl {
 
 func (userRepositoryImpl *RepositoryImpl) FindAll(gormTransaction *gorm.DB) ([]*entity.User, error) {
 	var userEntities []*entity.User
-	err := gormTransaction.Preload("Role").Find(&userEntities).Error
+	err := gormTransaction.Find(&userEntities).Error
 	return userEntities, err
 }
 
@@ -44,7 +44,6 @@ func (userRepositoryImpl *RepositoryImpl) FindAllPagination(
 
 	// Fetch paginated data
 	if err := rawQuery.
-		Preload("Role").
 		Order(orderClause).
 		Offset(offsetVal).
 		Limit(limitPage).
@@ -59,7 +58,6 @@ func (userRepositoryImpl *RepositoryImpl) FindAllPagination(
 func (userRepositoryImpl *RepositoryImpl) FindById(gormTransaction *gorm.DB, userId uint64) (*entity.User, error) {
 	var userEntity entity.User
 	err := gormTransaction.Model(&entity.User{}).
-		Preload("Role").
 		Preload("AuditLog", func(gormTransaction *gorm.DB) *gorm.DB {
 			return gormTransaction.Where("user_id = ?", userId).Limit(10)
 		}).
@@ -71,7 +69,6 @@ func (userRepositoryImpl *RepositoryImpl) FindById(gormTransaction *gorm.DB, use
 func (userRepositoryImpl *RepositoryImpl) FindByIdentifier(gormTransaction *gorm.DB, userIdentifier string) (*entity.User, error) {
 	var userEntity entity.User
 	err := gormTransaction.
-		Preload("Role").
 		Where("email = ?", userIdentifier).
 		Or("username = ?", userIdentifier).
 		First(&userEntity).Error
