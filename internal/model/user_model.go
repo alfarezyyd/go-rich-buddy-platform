@@ -10,8 +10,6 @@ type JwtClaimRequest struct {
 	Username    string   `json:"username"`
 	Name        string   `json:"name"`
 	Permissions []string `json:"-"`
-	RoleId      uint64   `json:"role_id" mapstructure:"role_id"`
-	RoleName    string   `json:"role_name" mapstructure:"role_name"`
 }
 
 type UserResponse struct {
@@ -20,18 +18,14 @@ type UserResponse struct {
 	Name              string             `json:"name"`
 	Email             string             `json:"email"`
 	AvatarPath        string             `json:"avatar_path"`
-	RoleResponse      *RoleResponse      `json:"role,omitempty" mapstructure:"role"`
 	AuditableResponse *AuditableResponse `json:"auditable_response"`
 }
 
 type CreateUserRequest struct {
-	Username     string `json:"username" validate:"required,min=3,max=100,unique=users;username"`
-	Name         string `json:"name" validate:"required,min=3,max=100"`
-	Email        string `json:"email" validate:"required,email,min=3,max=100,unique=users;email"`
-	Password     string `json:"password" validate:"required,min=3,max=100,weakPassword"`
-	RoleId       uint64 `json:"role_id" validate:"required,gte=0"`
-	DepartmentId uint64 `json:"department_id" validate:"required,gte=0,exists=departments;id"`
-	EmployeeId   string `json:"employee_id" validate:"required,gte=0,unique=users;employee_id"`
+	Username string `json:"username" validate:"required,min=3,max=100,unique=users;username"`
+	Name     string `json:"name" validate:"required,min=3,max=100"`
+	Email    string `json:"email" validate:"required,email,min=3,max=100,unique=users;email"`
+	Password string `json:"password" validate:"required,min=3,max=100,weakPassword"`
 }
 
 type UpdateUserRequest struct {
@@ -40,7 +34,6 @@ type UpdateUserRequest struct {
 	Name         string `json:"name" validate:"required,min=3,max=100"`
 	Email        string `json:"email" validate:"required,email,min=3,max=100,unique=users;email;Id"`
 	Password     string `json:"password,omitempty" validate:"omitempty,min=3,max=100,weakPassword"`
-	RoleId       uint64 `json:"role_id" validate:"required,gte=0"`
 	DepartmentId uint64 `json:"department_id" validate:"required,gte=0,exists=departments;id"`
 	EmployeeId   string `json:"employee_id" validate:"required,gte=0,unique=users;employee_id;Id"`
 }

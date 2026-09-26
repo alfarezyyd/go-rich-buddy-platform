@@ -8,7 +8,6 @@ type Controller interface {
 	FindAllUser(ginContext *gin.Context)
 	FindById(ginContext *gin.Context)
 	FindSelf(ginContext *gin.Context)
-	FindAllUserPagination(ginContext *gin.Context)
 	CreateUser(ginContext *gin.Context)
 	UpdateUser(ginContext *gin.Context)
 	UpdateProfile(ginContext *gin.Context)
