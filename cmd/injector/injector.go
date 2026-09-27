@@ -8,6 +8,8 @@ import (
 	"go-rich-buddy-platform/internal/tool/sectors"
 	"go-rich-buddy-platform/internal/user"
 	validatorService "go-rich-buddy-platform/internal/validator"
+	whatsappGateway "go-rich-buddy-platform/internal/whatsapp"
+	whatsappSession "go-rich-buddy-platform/internal/whatsapp_session"
 	"go-rich-buddy-platform/pkg/exception"
 	"go-rich-buddy-platform/pkg/middleware"
 	"go-rich-buddy-platform/routes"
@@ -102,14 +104,16 @@ var ApplicationRoutesModule = fx.Module("applicationRoutes",
 		routes.NewAuthenticationRoutes,
 		routes.NewProtectedRoutes,
 		routes.NewAgentRoutes,
+		routes.NewWhatsappRoutes,
 		func(
 			ginEngine *gin.Engine,
 			publicRoutes *routes.PublicRoutes,
 			authenticationRoutes *routes.AuthenticationRoutes,
 			protectedRoutes *routes.ProtectedRoutes,
 			agentRoutes *routes.AgentRoutes,
+			whatsappRoutes *routes.WhatsappRoutes,
 		) *routes.ApplicationRoutes {
-			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes)
+			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes, whatsappRoutes)
 		},
 	),
 	fx.Invoke(func(applicationRoutes *routes.ApplicationRoutes) {
@@ -152,4 +156,13 @@ var AgentModule = fx.Module("agentFeature",
 		fx.Annotate(agent.NewService, fx.As(new(agent.Service))),
 		fx.Annotate(agent.NewHandler, fx.As(new(agent.Controller))),
 	),
+)
+
+var WhatsappGatewayModule = fx.Module("whatsappGatewayFeature",
+	fx.Provide(fx.Annotate(whatsappGateway.NewService, fx.As(new(whatsappGateway.Service)))),
+	fx.Provide(whatsappGateway.NewGatewayHandler), // Not an interface for handler
+)
+
+var WhatsappSessionModule = fx.Module("whatsappSessionFeature",
+	fx.Provide(fx.Annotate(whatsappSession.NewRepository, fx.As(new(whatsappSession.SessionRepository)))),
 )

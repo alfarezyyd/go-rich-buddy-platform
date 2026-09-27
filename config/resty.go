@@ -60,7 +60,7 @@ func NewRestyModule(restyConfig *RestyConfig) *RestyModule {
 
 	restyModule.restyWhatsappGateway = restyModule.getBaseResty().
 		SetBaseURL("http://localhost:3000").
-		SetHeader("X-Device-Id", "Production Device")
+		SetHeader("X-Device-Id", "17fcefc6-6b43-4c53-be95-99d79dc670f4")
 
 	restyModule.restySectors = restyModule.getBaseResty().
 		SetBaseURL(restyConfig.Sectors.Endpoint).

@@ -8,7 +8,6 @@ import (
 	"go-rich-buddy-platform/internal/validator"
 	"go-rich-buddy-platform/pkg/exception"
 	"go-rich-buddy-platform/pkg/helper"
-	"go-rich-buddy-platform/pkg/mapper"
 	"net/http"
 	"time"
 
@@ -45,7 +44,7 @@ func (userService *ServiceImpl) FindAll() []*model.UserResponse {
 	err := userService.dbConnection.Transaction(func(gormTransaction *gorm.DB) error {
 		userResponse, err := userService.userRepository.FindAll(gormTransaction)
 		helper.CheckErrorOperation(err, exception.ParseGormError(err))
-		allUser = helper.MapEntitiesIntoResponsesWithFunc[*entity.User, *model.UserResponse](userResponse, mapper.FuncMapAuditable)
+		allUser = helper.MapEntitiesIntoResponsesWithFunc[*entity.User, *model.UserResponse](userResponse)
 		return nil
 	})
 	helper.CheckErrorOperation(err, exception.ParseGormError(err))
@@ -57,8 +56,7 @@ func (userService *ServiceImpl) FindById(ginContext *gin.Context, userId uint64)
 	err := userService.dbConnection.Transaction(func(gormTransaction *gorm.DB) error {
 		userEntity, err := userService.userRepository.FindById(gormTransaction, userId)
 		helper.CheckErrorOperation(err, exception.ParseGormError(err))
-		userResponse = helper.MapEntityIntoResponse[*entity.User, *model.UserResponse](userEntity,
-			mapper.FuncMapAuditable)
+		userResponse = helper.MapEntityIntoResponse[*entity.User, *model.UserResponse](userEntity)
 		return nil
 	})
 	helper.CheckErrorOperation(err, exception.ParseGormError(err))
@@ -71,8 +69,7 @@ func (userService *ServiceImpl) FindSelf(ginContext *gin.Context) *model.UserRes
 	err := userService.dbConnection.Transaction(func(gormTransaction *gorm.DB) error {
 		userEntity, err := userService.userRepository.FindById(gormTransaction, userJwtClaims.Id)
 		helper.CheckErrorOperation(err, exception.ParseGormError(err))
-		userResponse = helper.MapEntityIntoResponse[*entity.User, *model.UserResponse](userEntity,
-			mapper.FuncMapAuditable)
+		userResponse = helper.MapEntityIntoResponse[*entity.User, *model.UserResponse](userEntity)
 		return nil
 	})
 	helper.CheckErrorOperation(err, exception.ParseGormError(err))
@@ -80,13 +77,11 @@ func (userService *ServiceImpl) FindSelf(ginContext *gin.Context) *model.UserRes
 }
 
 func (userService *ServiceImpl) Create(ginContext *gin.Context, createUserRequest *model.CreateUserRequest) *model.PaginatedResponse[*model.UserResponse] {
-	userJwtClaims := helper.ExtractJwtClaimFromContext(ginContext)
 	var paginationResp *model.PaginatedResponse[*model.UserResponse]
 	valErr := userService.validatorService.ValidateStruct(createUserRequest)
 	userService.validatorService.ParseValidationError(valErr, *createUserRequest)
 	err := userService.dbConnection.Transaction(func(gormTransaction *gorm.DB) error {
 		userEntity := helper.MapCreateRequestIntoEntity[model.CreateUserRequest, entity.User](createUserRequest)
-		userEntity.Auditable = entity.NewAuditable(userJwtClaims.Name)
 		err := userService.userRepository.Create(gormTransaction, userEntity)
 		helper.CheckErrorOperation(err, exception.ParseGormError(err))
 

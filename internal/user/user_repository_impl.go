@@ -71,6 +71,12 @@ func (userRepositoryImpl *RepositoryImpl) FindByIdentifier(gormTransaction *gorm
 	return &userEntity, err
 }
 
+func (userRepositoryImpl *RepositoryImpl) FindByPhone(gormTransaction *gorm.DB, phone string) (*entity.User, error) {
+	var userEntity entity.User
+	err := gormTransaction.Where("phone = ?", phone).First(&userEntity).Error
+	return &userEntity, err
+}
+
 func (userRepositoryImpl *RepositoryImpl) FindByName(currencyName string) *entity.User {
 	//TODO implement me
 	panic("implement me")

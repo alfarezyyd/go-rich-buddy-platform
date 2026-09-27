@@ -1,0 +1,2 @@
+DROP INDEX idx_whatsapp_sessions_phone;
+DROP TABLE whatsapp_sessions;

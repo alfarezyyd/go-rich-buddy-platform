@@ -13,6 +13,7 @@ type ApplicationRoutes struct {
 	AuthenticationRoutes *AuthenticationRoutes
 	ProtectedRoutes      *ProtectedRoutes
 	AgentRoutes          *AgentRoutes
+	WhatsappRoutes       *WhatsappRoutes
 }
 
 func NewApplicationRoutes(
@@ -20,7 +21,8 @@ func NewApplicationRoutes(
 	publicRoutes *PublicRoutes,
 	authenticationRoutes *AuthenticationRoutes,
 	protectedRoutes *ProtectedRoutes,
-	agentRoutes *AgentRoutes) *ApplicationRoutes {
+	agentRoutes *AgentRoutes,
+	whatsappRoutes *WhatsappRoutes) *ApplicationRoutes {
 	parentRouterGroup := ginEngine.Group("/api/")
 	parentRouterGroup.Use(middleware.RequestMetaMiddleware())
 	return &ApplicationRoutes{
@@ -30,12 +32,16 @@ func NewApplicationRoutes(
 		AuthenticationRoutes: authenticationRoutes,
 		ProtectedRoutes:      protectedRoutes,
 		AgentRoutes:          agentRoutes,
+		WhatsappRoutes:       whatsappRoutes,
 	}
 }
 
 func (applicationRoutes *ApplicationRoutes) Setup() {
 	if applicationRoutes.PublicRoutes != nil {
 		applicationRoutes.PublicRoutes.Setup(applicationRoutes.RouterGroup)
+	}
+	if applicationRoutes.WhatsappRoutes != nil {
+		applicationRoutes.WhatsappRoutes.Setup(applicationRoutes.RouterGroup)
 	}
 	if applicationRoutes.AuthenticationRoutes != nil {
 		applicationRoutes.AuthenticationRoutes.Setup(applicationRoutes.RouterGroup)
@@ -47,4 +53,5 @@ func (applicationRoutes *ApplicationRoutes) Setup() {
 		applicationRoutes.AgentRoutes.Setup(applicationRoutes.RouterGroup)
 		applicationRoutes.AgentRoutes.SetupRoot(applicationRoutes.ginEngine)
 	}
+
 }
