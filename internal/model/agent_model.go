@@ -60,6 +60,7 @@ type ChatCompletionRequest struct {
 	Messages    []ChatMessage `json:"messages"`
 	Tools       []ChatTool    `json:"tools,omitempty"`
 	Temperature float64       `json:"temperature,omitempty"`
+	Stream      bool          `json:"stream,omitempty"`
 }
 
 type ChatCompletionResponse struct {

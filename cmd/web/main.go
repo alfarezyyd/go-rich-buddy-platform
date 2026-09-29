@@ -36,6 +36,7 @@ func main() {
 		injector.CoreModule,
 		injector.ApplicationRoutesModule,
 		injector.UserModule,
+		injector.RadarModule,
 		injector.ToolModule,
 		injector.AgentModule,
 		injector.ValidatorModule,

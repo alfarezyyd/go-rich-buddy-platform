@@ -7,18 +7,21 @@ import (
 	"go-rich-buddy-platform/internal/tool"
 	"go-rich-buddy-platform/internal/tool/sectors"
 	"go-rich-buddy-platform/internal/user"
+	"go-rich-buddy-platform/internal/radar"
 	validatorService "go-rich-buddy-platform/internal/validator"
 	whatsappGateway "go-rich-buddy-platform/internal/whatsapp"
 	whatsappSession "go-rich-buddy-platform/internal/whatsapp_session"
 	"go-rich-buddy-platform/pkg/exception"
 	"go-rich-buddy-platform/pkg/middleware"
 	"go-rich-buddy-platform/routes"
+	"context"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	universalTranslator "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"go.uber.org/fx"
 	"gorm.io/gorm"
@@ -105,6 +108,7 @@ var ApplicationRoutesModule = fx.Module("applicationRoutes",
 		routes.NewProtectedRoutes,
 		routes.NewAgentRoutes,
 		routes.NewWhatsappRoutes,
+		routes.NewRadarRoutes,
 		func(
 			ginEngine *gin.Engine,
 			publicRoutes *routes.PublicRoutes,
@@ -112,8 +116,9 @@ var ApplicationRoutesModule = fx.Module("applicationRoutes",
 			protectedRoutes *routes.ProtectedRoutes,
 			agentRoutes *routes.AgentRoutes,
 			whatsappRoutes *routes.WhatsappRoutes,
+			radarRoutes *routes.RadarRoutes,
 		) *routes.ApplicationRoutes {
-			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes, whatsappRoutes)
+			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes, whatsappRoutes, radarRoutes)
 		},
 	),
 	fx.Invoke(func(applicationRoutes *routes.ApplicationRoutes) {
@@ -142,6 +147,35 @@ func NewAgentClient(viperConfig *viper.Viper) client.AgentClient {
 	apiKey := viperConfig.GetString("AGENT_APIKEY")
 	return client.NewAgentClient(baseURL, apiKey)
 }
+
+func NewSectorsClient(restyModule *config.RestyModule) radar.SectorsClient {
+	return radar.NewSectorsClient(restyModule.GetRestySectors())
+}
+
+var RadarModule = fx.Module("radarFeature",
+	fx.Provide(
+		NewSectorsClient,
+		fx.Annotate(radar.NewRepository, fx.As(new(radar.Repository))),
+		fx.Annotate(radar.NewService, fx.As(new(radar.Service))),
+		fx.Annotate(radar.NewHandler, fx.As(new(radar.Controller))),
+	),
+	// Start the pipeline scheduler on application startup
+	fx.Invoke(func(lc fx.Lifecycle, radarService radar.Service, db *gorm.DB) {
+		scheduler := radar.NewScheduler(radarService, db, nil) // broadcastFunc wired separately via WhatsApp module
+		lc.Append(fx.Hook{
+			OnStart: func(ctx context.Context) error {
+				logrus.Info("Starting Radar pipeline scheduler")
+				scheduler.Start()
+				return nil
+			},
+			OnStop: func(ctx context.Context) error {
+				logrus.Info("Stopping Radar pipeline scheduler")
+				scheduler.Stop()
+				return nil
+			},
+		})
+	}),
+)
 
 var ToolModule = fx.Module("toolFeature",
 	fx.Provide(
