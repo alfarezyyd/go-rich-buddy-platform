@@ -8,9 +8,12 @@ import (
 	"go-rich-buddy-platform/config"
 	"go-rich-buddy-platform/internal/agent"
 	"go-rich-buddy-platform/internal/entity"
+	"go-rich-buddy-platform/internal/memory"
+	"go-rich-buddy-platform/internal/memory/privacy"
 	"go-rich-buddy-platform/internal/model"
 	"go-rich-buddy-platform/internal/radar"
 	"go-rich-buddy-platform/internal/user"
+	pkgi18n "go-rich-buddy-platform/pkg/i18n"
 	whatsappSession "go-rich-buddy-platform/internal/whatsapp_session"
 
 	"github.com/gin-gonic/gin"
@@ -48,7 +51,9 @@ type ServiceImpl struct {
 	userRepository    user.Repository
 	radarService      radar.Service
 	agentService      agent.Service
+	memoryService     memory.Service
 	restyModule       *config.RestyModule
+	localizer         *pkgi18n.Localizer
 }
 
 func NewService(
@@ -57,7 +62,9 @@ func NewService(
 	userRepository user.Repository,
 	radarService radar.Service,
 	agentService agent.Service,
+	memoryService memory.Service,
 	restyModule *config.RestyModule,
+	i18nBundle *pkgi18n.Bundle,
 ) Service {
 	return &ServiceImpl{
 		dbConnection:      dbConnection,
@@ -65,7 +72,9 @@ func NewService(
 		userRepository:    userRepository,
 		radarService:      radarService,
 		agentService:      agentService,
+		memoryService:     memoryService,
 		restyModule:       restyModule,
+		localizer:         i18nBundle.NewLocalizer("id"),
 	}
 }
 
@@ -77,6 +86,7 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 	phoneNumber := strings.Split(textMessage.Payload.From, "@")[0]
 	payloadBody := strings.TrimSpace(strings.ToLower(textMessage.Payload.Body))
 	rawBody := strings.TrimSpace(textMessage.Payload.Body)
+	waMessageID := textMessage.Payload.Id
 
 	return whatsappGatewayService.dbConnection.Transaction(func(tx *gorm.DB) error {
 		whatsappSession, err := whatsappGatewayService.sessionRepository.FindByPhone(tx, phoneNumber)
@@ -87,6 +97,27 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 			}
 			if err := whatsappGatewayService.sessionRepository.Upsert(tx, whatsappSession); err != nil {
 				return err
+			}
+		}
+
+		// Resolve user for memory operations.
+		usr, _ := whatsappGatewayService.userRepository.FindByPhone(tx, phoneNumber)
+
+		// Persist the incoming message (with PII redaction + dedup).
+		if usr != nil && waMessageID != "" {
+			_, chatSession, saveErr := whatsappGatewayService.memoryService.SaveIncomingMessage(
+				context.Background(), tx, usr.Id, waMessageID, rawBody, "user",
+			)
+			if saveErr != nil {
+				logrus.WithError(saveErr).Warn("failed to persist incoming message to memory store")
+			}
+			_ = chatSession // used by async jobs below if needed
+		}
+
+		// Handle deterministic memory control commands before the state machine.
+		if usr != nil {
+			if handled, handleErr := whatsappGatewayService.handleMemoryCommand(tx, usr.Id, phoneNumber, payloadBody, rawBody); handled {
+				return handleErr
 			}
 		}
 
@@ -133,6 +164,67 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 	})
 }
 
+// handleMemoryCommand processes deterministic memory control commands.
+// Returns (true, err) if a memory command was matched, (false, nil) otherwise.
+func (whatsappGatewayService *ServiceImpl) handleMemoryCommand(tx *gorm.DB, userID uint64, phone, payloadBody, rawBody string) (bool, error) {
+	cmd, target := privacy.ParseMemoryCommand(payloadBody)
+	if cmd == privacy.CommandNone {
+		return false, nil
+	}
+
+	ctx := context.Background()
+
+	switch cmd {
+	case privacy.CommandViewMemory:
+		items, err := whatsappGatewayService.memoryService.GetUserMemoryItems(ctx, tx, userID)
+		if err != nil || len(items) == 0 {
+			return true, whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMemoryEmpty))
+		}
+		return true, whatsappGatewayService.sendMessage(phone, formatMemoryItems(items))
+
+	case privacy.CommandForgetItem:
+		if target == "" {
+			return true, whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMemoryForgetInvalid))
+		}
+		_ = whatsappGatewayService.memoryService.ForgetMemoryByKey(ctx, tx, userID, target)
+		return true, whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMemoryForgotConfirm))
+
+	case privacy.CommandDeleteChatHistory:
+		_ = whatsappGatewayService.memoryService.DeleteChatHistory(ctx, tx, userID)
+		return true, whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgChatHistoryDeleted))
+
+	case privacy.CommandDeleteAllMemory:
+		_ = whatsappGatewayService.memoryService.DeleteAllMemory(ctx, tx, userID)
+		return true, whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgAllMemoryDeleted))
+	}
+
+	return false, nil
+}
+
+// formatMemoryItems formats memory items as a human-readable message for the user.
+func formatMemoryItems(items []*entity.UserMemoryItem) string {
+	var sb strings.Builder
+	sb.WriteString("📋 *Preferensi & Memori Kamu*\n\n")
+	keyLabels := map[string]string{
+		"profile.experience_level": "Tingkat pengalaman",
+		"pref.explanation_depth":   "Kedalaman penjelasan",
+		"pref.tone":                "Nada percakapan",
+		"pref.emoji":               "Emoji",
+		"pref.language":            "Bahasa",
+		"interest.topics":          "Minat",
+		"goal.learning":            "Tujuan belajar",
+	}
+	for _, item := range items {
+		label := item.Key
+		if l, ok := keyLabels[item.Key]; ok {
+			label = l
+		}
+		sb.WriteString(fmt.Sprintf("• %s: %s\n", label, item.Value))
+	}
+	sb.WriteString("\nKetik *lupakan <preferensi>* untuk menghapus, atau *hapus semua memori* untuk menghapus semua.")
+	return sb.String()
+}
+
 func (whatsappGatewayService *ServiceImpl) upsertSession(tx *gorm.DB, session *entity.WhatsappSession) error {
 	return whatsappGatewayService.sessionRepository.Upsert(tx, session)
 }
@@ -146,14 +238,23 @@ func (whatsappGatewayService *ServiceImpl) transitionTo(tx *gorm.DB, session *en
 	return next()
 }
 
+// t translates a plain message key with no template data.
+func (whatsappGatewayService *ServiceImpl) t(key string) string {
+	return whatsappGatewayService.localizer.T(key)
+}
+
+// td translates a message key with template data.
+func (whatsappGatewayService *ServiceImpl) td(key string, data any) string {
+	return whatsappGatewayService.localizer.TData(key, data)
+}
+
+// tp translates a plural-aware message key.
+func (whatsappGatewayService *ServiceImpl) tp(key string, count int, data any) string {
+	return whatsappGatewayService.localizer.TPlural(key, count, data)
+}
+
 func (whatsappGatewayService *ServiceImpl) sendMainMenu(phone string) error {
-	msg := "Halo, aku RichBuddy 👋 Sahabat analisis pasar saham IDX kamu.\n\n" +
-		"Silakan pilih menu:\n" +
-		"1️⃣ Register — Buat akun & persona\n" +
-		"2️⃣ Order — Lihat paket subscription/kredit\n" +
-		"3️⃣ 📊 Radar Saham — 5 saham pilihan harian berbasis data\n\n" +
-		"Balas dengan angka (*1*, *2*, atau *3*)."
-	return whatsappGatewayService.sendMessage(phone, msg)
+	return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuGreeting))
 }
 
 func (whatsappGatewayService *ServiceImpl) handleMainMenu(tx *gorm.DB, session *entity.WhatsappSession, phone, body string) error {
@@ -161,16 +262,16 @@ func (whatsappGatewayService *ServiceImpl) handleMainMenu(tx *gorm.DB, session *
 	case "1", "register", "daftar":
 		_, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 		if err == nil {
-			return whatsappGatewayService.sendMessage(phone, "Anda sudah terdaftar! Silakan pilih menu lain:\n*2* untuk Order\n*3* untuk 📊 Radar Saham.")
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuAlreadyRegistered))
 		}
 		return whatsappGatewayService.transitionTo(tx, session, stateRegisterAwaitName, func() error {
-			return whatsappGatewayService.sendMessage(phone, "Masukkan nama lengkap Anda:")
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuEnterFullName))
 		})
 
 	case "2", "order", "paket", "langganan":
 		_, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 		if err != nil {
-			return whatsappGatewayService.sendMessage(phone, "Maaf, Anda harus mendaftar dulu. Balas *1* untuk Register.")
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuMustRegisterFirst))
 		}
 		return whatsappGatewayService.transitionTo(tx, session, stateOrderMenu, func() error {
 			return whatsappGatewayService.sendOrderMenu(phone)
@@ -179,7 +280,7 @@ func (whatsappGatewayService *ServiceImpl) handleMainMenu(tx *gorm.DB, session *
 	case "3", "radar", "radar saham":
 		_, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 		if err != nil {
-			return whatsappGatewayService.sendMessage(phone, "Maaf, Anda harus mendaftar dulu sebelum menggunakan Radar Saham. Balas *1* untuk Register.")
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuMustRegisterRadar))
 		}
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamMenu, func() error {
 			return whatsappGatewayService.sendRadarSahamMenu(phone)
@@ -193,25 +294,28 @@ func (whatsappGatewayService *ServiceImpl) handleMainMenu(tx *gorm.DB, session *
 			if err := whatsappGatewayService.upsertSession(tx, session); err != nil {
 				return err
 			}
-			_ = whatsappGatewayService.sendMessage(phone, "Terlalu banyak input salah. Kembali ke menu utama...")
+			_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuTooManyWrongInput))
 			return whatsappGatewayService.sendMainMenu(phone)
 		}
 		if err := whatsappGatewayService.upsertSession(tx, session); err != nil {
 			return err
 		}
-		return whatsappGatewayService.sendMessage(phone, fmt.Sprintf("Pilihan tidak dikenali. Balas 1, 2, atau 3. (Percobaan %d/%d)", session.RetryCount, maxRetry))
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgMainMenuUnrecognizedChoice, map[string]any{
+			"Current": session.RetryCount,
+			"Max":     maxRetry,
+		}))
 	}
 }
 
 func (whatsappGatewayService *ServiceImpl) handleRegisterAwaitName(tx *gorm.DB, session *entity.WhatsappSession, phone, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return whatsappGatewayService.sendMessage(phone, "Nama tidak boleh kosong. Silakan masukkan nama Anda:")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgRegisterNameCannotBeEmpty))
 	}
 
 	_, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 	if err == nil {
 		return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
-			_ = whatsappGatewayService.sendMessage(phone, "Anda sudah terdaftar! Kembali ke menu utama...")
+			_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgRegisterAlreadyRegistered))
 			return whatsappGatewayService.sendMainMenu(phone)
 		})
 	}
@@ -227,19 +331,13 @@ func (whatsappGatewayService *ServiceImpl) handleRegisterAwaitName(tx *gorm.DB, 
 	}
 
 	return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
-		_ = whatsappGatewayService.sendMessage(phone, fmt.Sprintf("Registrasi berhasil, %s!\nAkun dibuat dengan tier Starter (10 kredit).", name))
+		_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgRegisterSuccess, map[string]any{"Name": name}))
 		return whatsappGatewayService.sendMainMenu(phone)
 	})
 }
 
 func (whatsappGatewayService *ServiceImpl) sendOrderMenu(phone string) error {
-	msg := "Pilih paket subscription:\n" +
-		"1️⃣ Starter (Gratis) — 10 kredit/hari\n" +
-		"2️⃣ Buddy+ — 300 kredit/bulan\n" +
-		"3️⃣ Pro/Analyst — unlimited fair-use\n" +
-		"4️⃣ Top-up 50 kredit\n\n" +
-		"Balas dengan angka (1/2/3/4).\n_(Ketik *batal* untuk kembali ke menu utama)_"
-	return whatsappGatewayService.sendMessage(phone, msg)
+	return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOrderMenu))
 }
 
 func (whatsappGatewayService *ServiceImpl) handleOrderMenu(tx *gorm.DB, session *entity.WhatsappSession, phone, body string) error {
@@ -261,17 +359,20 @@ func (whatsappGatewayService *ServiceImpl) handleOrderMenu(tx *gorm.DB, session 
 			session.RetryCount = 0
 			session.CurrentState = stateMainMenu
 			_ = whatsappGatewayService.upsertSession(tx, session)
-			_ = whatsappGatewayService.sendMessage(phone, "Terlalu banyak input salah. Kembali ke menu utama...")
+			_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgMainMenuTooManyWrongInput))
 			return whatsappGatewayService.sendMainMenu(phone)
 		}
 		_ = whatsappGatewayService.upsertSession(tx, session)
-		return whatsappGatewayService.sendMessage(phone, fmt.Sprintf("Pilihan tidak valid. Balas angka 1-4. (Percobaan %d/%d)", session.RetryCount, maxRetry))
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgOrderInvalidChoice, map[string]any{
+			"Current": session.RetryCount,
+			"Max":     maxRetry,
+		}))
 	}
 
 	usr, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 	if err != nil {
 		return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
-			return whatsappGatewayService.sendMessage(phone, "Akun tidak ditemukan. Silakan daftar dulu.")
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOrderAccountNotFound))
 		})
 	}
 
@@ -281,10 +382,10 @@ func (whatsappGatewayService *ServiceImpl) handleOrderMenu(tx *gorm.DB, session 
 		return err
 	}
 
-	payloadMessage := fmt.Sprintf(
-		"🎉 Anda memilih paket *%s*.\n\n(Simulasi: Pembayaran sukses! Saldo kredit Anda sekarang: %d kredit)",
-		tier.name, usr.CreditBalance,
-	)
+	payloadMessage := whatsappGatewayService.td(msgOrderSuccess, map[string]any{
+		"Tier":    tier.name,
+		"Credits": usr.CreditBalance,
+	})
 
 	return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
 		_ = whatsappGatewayService.sendMessage(phone, payloadMessage)
@@ -293,49 +394,32 @@ func (whatsappGatewayService *ServiceImpl) handleOrderMenu(tx *gorm.DB, session 
 }
 
 func (whatsappGatewayService *ServiceImpl) sendRadarSahamMenu(phone string) error {
-	msg := "📊 *Radar Saham*\n" +
-		"Mau lihat saham pilihan berdasarkan apa?\n\n" +
-		"1️⃣ Subsektor\n" +
-		"2️⃣ Watchlist saya\n" +
-		"3️⃣ Cari ticker manual (ketik kode saham)\n" +
-		"4️⃣ ⚙️ Pengaturan Notifikasi Pagi (Opt-in)\n\n" +
-		"Balas dengan angka (*1*, *2*, *3*, atau *4*).\n" +
-		"_(Ketik *batal* kapan saja untuk kembali ke menu utama)_"
-	return whatsappGatewayService.sendMessage(phone, msg)
+	return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgRadarSahamMenu))
 }
 
 func (whatsappGatewayService *ServiceImpl) handleRadarSahamMenu(tx *gorm.DB, session *entity.WhatsappSession, phone, body string) error {
 	usr, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "Akun belum terdaftar.")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgRadarAccountNotRegistered))
 	}
 
 	switch body {
 	case "1", "subsektor":
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamSubsector, func() error {
-			msg := "Pilih subsektor yang ingin dipantau:\n\n" +
-				"1. 🏦 Banks\n" +
-				"2. 🍔 Food & Beverage\n" +
-				"3. ⚡ Coal\n" +
-				"4. 📡 Telco\n" +
-				"5. 🔍 Lainnya (ketik nama subsektor)\n\n" +
-				"Balas dengan angka 1-5 atau ketik nama subsektor."
-			return whatsappGatewayService.sendMessage(phone, msg)
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgSubsectorMenu))
 		})
 
 	case "2", "watchlist":
 		watchlist, err := whatsappGatewayService.radarService.GetUserWatchlist(context.Background(), tx, usr.Id)
 		if err != nil || len(watchlist.Symbols) == 0 {
 			return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamWatchlistAdd, func() error {
-				msg := "Watchlist kamu saat ini masih kosong 📝\n\n" +
-					"Silakan ketik kode saham yang ingin kamu pantau (pisahkan dengan koma, contoh: *BBCA, BBRI, ANTM, GOTO*):"
-				return whatsappGatewayService.sendMessage(phone, msg)
+				return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgWatchlistEmpty))
 			})
 		}
 
 		result, err := whatsappGatewayService.radarService.GetRadarByWatchlist(context.Background(), tx, usr.Id)
 		if err != nil {
-			return whatsappGatewayService.sendMessage(phone, "Gagal mengambil data Radar Watchlist: "+err.Error())
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgWatchlistFetchError, map[string]any{"Error": err.Error()}))
 		}
 
 		formatted := whatsappGatewayService.radarService.FormatRadarMessage(result)
@@ -345,22 +429,16 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamMenu(tx *gorm.DB, ses
 
 	case "3", "manual", "cari":
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamManual, func() error {
-			msg := "Ketikkan kode saham yang ingin dipantau (pisahkan dengan koma, contoh: *BBCA, BBRI, ANTM, GOTO*):"
-			return whatsappGatewayService.sendMessage(phone, msg)
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgManualTickerPrompt))
 		})
 
 	case "4", "optin", "pengaturan", "notifikasi", "broadcast":
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarOptInPrompt, func() error {
-			msg := "Mau RichBuddy kirim Radar otomatis tiap pagi jam 08:00 WIB? ☀️\n\n" +
-				"1️⃣ Ya, kirim untuk subsektor pilihan saya (Banks)\n" +
-				"2️⃣ Ya, kirim untuk watchlist saya\n" +
-				"3️⃣ Tidak usah, saya cek manual saja\n\n" +
-				"Balas dengan angka (1/2/3)."
-			return whatsappGatewayService.sendMessage(phone, msg)
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOptInPrompt))
 		})
 
 	default:
-		return whatsappGatewayService.sendMessage(phone, "Pilihan tidak valid. Balas 1 untuk Subsektor, 2 untuk Watchlist, 3 untuk Manual, atau 4 untuk Pengaturan Notifikasi.")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgRadarInvalidChoice))
 	}
 }
 
@@ -383,7 +461,7 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamSubsector(tx *gorm.DB
 		subSector = "Telco"
 	case "5", "lainnya", "other":
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamSubsectorCust, func() error {
-			return whatsappGatewayService.sendMessage(phone, "Ketikkan nama subsektor yang ingin dipantau (contoh: *Basic Materials*, *Automotive*, *Technology*):")
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgSubsectorCustomPrompt))
 		})
 	default:
 		// Check if user directly typed subsector name
@@ -392,7 +470,7 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamSubsector(tx *gorm.DB
 
 	result, err := whatsappGatewayService.radarService.GetRadarBySubSector(context.Background(), tx, userID, subSector)
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "Gagal mengambil data subsektor: "+err.Error())
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgSubsectorFetchError, map[string]any{"Error": err.Error()}))
 	}
 
 	formatted := whatsappGatewayService.radarService.FormatRadarMessage(result)
@@ -410,7 +488,7 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamSubsectorCustom(tx *g
 
 	result, err := whatsappGatewayService.radarService.GetRadarBySubSector(context.Background(), tx, userID, strings.TrimSpace(subSectorName))
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "Gagal mengambil data subsektor: "+err.Error())
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgSubsectorFetchError, map[string]any{"Error": err.Error()}))
 	}
 
 	formatted := whatsappGatewayService.radarService.FormatRadarMessage(result)
@@ -436,12 +514,12 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamManual(tx *gorm.DB, s
 	}
 
 	if len(symbols) == 0 {
-		return whatsappGatewayService.sendMessage(phone, "Kode saham tidak valid. Silakan ketik kode saham (contoh: *BBCA, BBRI, ANTM*):")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgManualInvalidTicker))
 	}
 
 	result, err := whatsappGatewayService.radarService.GetRadarByManualTickers(context.Background(), tx, userID, symbols)
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "Gagal memproses data ticker: "+err.Error())
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgManualTickerFetchError, map[string]any{"Error": err.Error()}))
 	}
 
 	formatted := whatsappGatewayService.radarService.FormatRadarMessage(result)
@@ -453,7 +531,7 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamManual(tx *gorm.DB, s
 func (whatsappGatewayService *ServiceImpl) handleRadarSahamWatchlistAdd(tx *gorm.DB, session *entity.WhatsappSession, phone, rawTickers string) error {
 	usr, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "User tidak ditemukan.")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgWatchlistUserNotFound))
 	}
 
 	rawSymbols := strings.Split(rawTickers, ",")
@@ -466,18 +544,18 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamWatchlistAdd(tx *gorm
 	}
 
 	if len(symbols) == 0 {
-		return whatsappGatewayService.sendMessage(phone, "Kode saham tidak valid. Ketik kode saham (contoh: *BBCA, BBRI, ANTM*):")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgWatchlistInvalidTicker))
 	}
 
 	_, _ = whatsappGatewayService.radarService.AddToWatchlist(context.Background(), tx, usr.Id, symbols)
 	result, err := whatsappGatewayService.radarService.GetRadarByWatchlist(context.Background(), tx, usr.Id)
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "Gagal mengambil radar watchlist: "+err.Error())
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgWatchlistAddFetchError, map[string]any{"Error": err.Error()}))
 	}
 
 	formatted := whatsappGatewayService.radarService.FormatRadarMessage(result)
 	return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamResults, func() error {
-		_ = whatsappGatewayService.sendMessage(phone, fmt.Sprintf("✅ Berhasil menambahkan %d saham ke watchlist kamu!\n", len(symbols)))
+		_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.tp(msgWatchlistAddSuccess, len(symbols), map[string]any{"Count": len(symbols)}))
 		return whatsappGatewayService.sendMessage(phone, formatted)
 	})
 }
@@ -532,7 +610,7 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamResults(tx *gorm.DB, 
 	if targetSymbol != "" {
 		drillDown, err := whatsappGatewayService.radarService.GetDrillDownExplanation(context.Background(), tx, targetSymbol)
 		if err != nil {
-			return whatsappGatewayService.sendMessage(phone, "Gagal mengambil data drill-down untuk "+targetSymbol)
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgDrillDownFetchError, map[string]any{"Symbol": targetSymbol}))
 		}
 		formatted := whatsappGatewayService.radarService.FormatDrillDownMessage(drillDown)
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamDrillDown, func() error {
@@ -582,22 +660,22 @@ func (whatsappGatewayService *ServiceImpl) answerStockInquiry(tx *gorm.DB, phone
 	err := whatsappGatewayService.agentService.ProcessTurn(ctx, agentSession, userQuestion)
 	if err != nil {
 		logrus.WithError(err).Error("Error processing agent response for stock inquiry")
-		return whatsappGatewayService.sendMessage(phone, "Maaf, terjadi kendala saat menganalisis pertanyaan Anda. Silakan tanyakan hal lain seputar saham rekomendasi atau ketik *menu*.")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgAgentError))
 	}
 
 	response := agentSession.CollectedResponse()
 	if response == "" {
-		response = "Berikut adalah data pasar terkini untuk saham yang Anda tanyakan. Ketik *menu* untuk melihat Radar Saham lainnya."
+		response = whatsappGatewayService.t(msgAgentEmptyResult)
 	}
 
-	response += "\n\n_(Ketik *menu* untuk kembali ke menu Radar Saham atau *batal* untuk menu utama)_"
+	response += whatsappGatewayService.t(msgAgentFooter)
 	return whatsappGatewayService.sendMessage(phone, response)
 }
 
 func (whatsappGatewayService *ServiceImpl) handleRadarOptInPrompt(tx *gorm.DB, session *entity.WhatsappSession, phone, body string) error {
 	usr, err := whatsappGatewayService.userRepository.FindByPhone(tx, phone)
 	if err != nil {
-		return whatsappGatewayService.sendMessage(phone, "User tidak ditemukan.")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgWatchlistUserNotFound))
 	}
 
 	enabled := true
@@ -611,9 +689,8 @@ func (whatsappGatewayService *ServiceImpl) handleRadarOptInPrompt(tx *gorm.DB, s
 			BroadcastEnabled:   &enabled,
 			BroadcastTime:      "08:00",
 		})
-		msg := "✅ *Notifikasi Pagi Aktif!* RichBuddy akan mengirimkan Radar Subsektor Banks otomatis setiap pagi jam 08:00 WIB."
 		return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
-			_ = whatsappGatewayService.sendMessage(phone, msg)
+			_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOptInSubsectorEnabled))
 			return whatsappGatewayService.sendMainMenu(phone)
 		})
 
@@ -623,9 +700,8 @@ func (whatsappGatewayService *ServiceImpl) handleRadarOptInPrompt(tx *gorm.DB, s
 			BroadcastEnabled: &enabled,
 			BroadcastTime:    "08:00",
 		})
-		msg := "✅ *Notifikasi Pagi Aktif!* RichBuddy akan mengirimkan Radar untuk Watchlist kamu otomatis setiap pagi jam 08:00 WIB."
 		return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
-			_ = whatsappGatewayService.sendMessage(phone, msg)
+			_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOptInWatchlistEnabled))
 			return whatsappGatewayService.sendMainMenu(phone)
 		})
 
@@ -635,14 +711,13 @@ func (whatsappGatewayService *ServiceImpl) handleRadarOptInPrompt(tx *gorm.DB, s
 			BroadcastEnabled: &disabled,
 			BroadcastTime:    "08:00",
 		})
-		msg := "Pengiriman otomatis dinonaktifkan. Anda tetap dapat mengakses Radar Saham kapan saja melalui menu."
 		return whatsappGatewayService.transitionTo(tx, session, stateMainMenu, func() error {
-			_ = whatsappGatewayService.sendMessage(phone, msg)
+			_ = whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOptInDisabled))
 			return whatsappGatewayService.sendMainMenu(phone)
 		})
 
 	default:
-		return whatsappGatewayService.sendMessage(phone, "Pilihan tidak valid. Balas 1 untuk Subsektor, 2 untuk Watchlist, atau 3 untuk Manual.")
+		return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.t(msgOptInInvalidChoice))
 	}
 }
 

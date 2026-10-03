@@ -42,6 +42,8 @@ func main() {
 		injector.ValidatorModule,
 		injector.WhatsappGatewayModule,
 		injector.WhatsappSessionModule,
+		injector.CacheModule,
+		injector.MemoryModule,
 		fx.Invoke(Run),
 	)
 

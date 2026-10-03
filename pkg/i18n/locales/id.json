@@ -1,0 +1,155 @@
+[
+  {
+    "id": "main_menu_greeting",
+    "translation": "Halo, aku RichBuddy 👋 Sahabat analisis pasar saham IDX kamu.\n\nSilakan pilih menu:\n1️⃣ Register — Buat akun & persona\n2️⃣ Order — Lihat paket subscription/kredit\n3️⃣ 📊 Radar Saham — 5 saham pilihan harian berbasis data\n\nBalas dengan angka (*1*, *2*, atau *3*)."
+  },
+  {
+    "id": "main_menu_already_registered",
+    "translation": "Anda sudah terdaftar! Silakan pilih menu lain:\n*2* untuk Order\n*3* untuk 📊 Radar Saham."
+  },
+  {
+    "id": "main_menu_enter_full_name",
+    "translation": "Masukkan nama lengkap Anda:"
+  },
+  {
+    "id": "main_menu_must_register_first",
+    "translation": "Maaf, Anda harus mendaftar dulu. Balas *1* untuk Register."
+  },
+  {
+    "id": "main_menu_must_register_for_radar",
+    "translation": "Maaf, Anda harus mendaftar dulu sebelum menggunakan Radar Saham. Balas *1* untuk Register."
+  },
+  {
+    "id": "main_menu_too_many_wrong_input",
+    "translation": "Terlalu banyak input salah. Kembali ke menu utama..."
+  },
+  {
+    "id": "main_menu_unrecognized_choice",
+    "translation": "Pilihan tidak dikenali. Balas 1, 2, atau 3. (Percobaan {{.Current}}/{{.Max}})"
+  },
+  {
+    "id": "register_name_cannot_be_empty",
+    "translation": "Nama tidak boleh kosong. Silakan masukkan nama Anda:"
+  },
+  {
+    "id": "register_already_registered",
+    "translation": "Anda sudah terdaftar! Kembali ke menu utama..."
+  },
+  {
+    "id": "register_success",
+    "translation": "Registrasi berhasil, {{.Name}}!\nAkun dibuat dengan tier Starter (10 kredit)."
+  },
+  {
+    "id": "order_menu",
+    "translation": "Pilih paket subscription:\n1️⃣ Starter (Gratis) — 10 kredit/hari\n2️⃣ Buddy+ — 300 kredit/bulan\n3️⃣ Pro/Analyst — unlimited fair-use\n4️⃣ Top-up 50 kredit\n\nBalas dengan angka (1/2/3/4).\n_(Ketik *batal* untuk kembali ke menu utama)_"
+  },
+  {
+    "id": "order_invalid_choice",
+    "translation": "Pilihan tidak valid. Balas angka 1-4. (Percobaan {{.Current}}/{{.Max}})"
+  },
+  {
+    "id": "order_account_not_found",
+    "translation": "Akun tidak ditemukan. Silakan daftar dulu."
+  },
+  {
+    "id": "order_success",
+    "translation": "🎉 Anda memilih paket *{{.Tier}}*.\n\n(Simulasi: Pembayaran sukses! Saldo kredit Anda sekarang: {{.Credits}} kredit)"
+  },
+  {
+    "id": "radar_saham_menu",
+    "translation": "📊 *Radar Saham*\nMau lihat saham pilihan berdasarkan apa?\n\n1️⃣ Subsektor\n2️⃣ Watchlist saya\n3️⃣ Cari ticker manual (ketik kode saham)\n4️⃣ ⚙️ Pengaturan Notifikasi Pagi (Opt-in)\n\nBalas dengan angka (*1*, *2*, *3*, atau *4*).\n_(Ketik *batal* kapan saja untuk kembali ke menu utama)_"
+  },
+  {
+    "id": "radar_account_not_registered",
+    "translation": "Akun belum terdaftar."
+  },
+  {
+    "id": "radar_invalid_choice",
+    "translation": "Pilihan tidak valid. Balas 1 untuk Subsektor, 2 untuk Watchlist, 3 untuk Manual, atau 4 untuk Pengaturan Notifikasi."
+  },
+  {
+    "id": "subsector_menu",
+    "translation": "Pilih subsektor yang ingin dipantau:\n\n1. 🏦 Banks\n2. 🍔 Food & Beverage\n3. ⚡ Coal\n4. 📡 Telco\n5. 🔍 Lainnya (ketik nama subsektor)\n\nBalas dengan angka 1-5 atau ketik nama subsektor."
+  },
+  {
+    "id": "subsector_custom_prompt",
+    "translation": "Ketikkan nama subsektor yang ingin dipantau (contoh: *Basic Materials*, *Automotive*, *Technology*):"
+  },
+  {
+    "id": "subsector_fetch_error",
+    "translation": "Gagal mengambil data subsektor: {{.Error}}"
+  },
+  {
+    "id": "watchlist_empty",
+    "translation": "Watchlist kamu saat ini masih kosong 📝\n\nSilakan ketik kode saham yang ingin kamu pantau (pisahkan dengan koma, contoh: *BBCA, BBRI, ANTM, GOTO*):"
+  },
+  {
+    "id": "watchlist_fetch_error",
+    "translation": "Gagal mengambil data Radar Watchlist: {{.Error}}"
+  },
+  {
+    "id": "watchlist_add_success",
+    "one": "✅ Berhasil menambahkan {{.Count}} saham ke watchlist kamu!\n",
+    "other": "✅ Berhasil menambahkan {{.Count}} saham ke watchlist kamu!\n"
+  },
+  {
+    "id": "watchlist_add_fetch_error",
+    "translation": "Gagal mengambil radar watchlist: {{.Error}}"
+  },
+  {
+    "id": "watchlist_user_not_found",
+    "translation": "User tidak ditemukan."
+  },
+  {
+    "id": "watchlist_invalid_ticker_add",
+    "translation": "Kode saham tidak valid. Ketik kode saham (contoh: *BBCA, BBRI, ANTM*):"
+  },
+  {
+    "id": "manual_ticker_prompt",
+    "translation": "Ketikkan kode saham yang ingin dipantau (pisahkan dengan koma, contoh: *BBCA, BBRI, ANTM, GOTO*):"
+  },
+  {
+    "id": "manual_invalid_ticker",
+    "translation": "Kode saham tidak valid. Silakan ketik kode saham (contoh: *BBCA, BBRI, ANTM*):"
+  },
+  {
+    "id": "manual_ticker_fetch_error",
+    "translation": "Gagal memproses data ticker: {{.Error}}"
+  },
+  {
+    "id": "drilldown_fetch_error",
+    "translation": "Gagal mengambil data drill-down untuk {{.Symbol}}"
+  },
+  {
+    "id": "agent_error",
+    "translation": "Maaf, terjadi kendala saat menganalisis pertanyaan Anda. Silakan tanyakan hal lain seputar saham rekomendasi atau ketik *menu*."
+  },
+  {
+    "id": "agent_empty_result",
+    "translation": "Berikut adalah data pasar terkini untuk saham yang Anda tanyakan. Ketik *menu* untuk melihat Radar Saham lainnya."
+  },
+  {
+    "id": "agent_footer",
+    "translation": "\n\n_(Ketik *menu* untuk kembali ke menu Radar Saham atau *batal* untuk menu utama)_"
+  },
+  {
+    "id": "optin_prompt",
+    "translation": "Mau RichBuddy kirim Radar otomatis tiap pagi jam 08:00 WIB? ☀️\n\n1️⃣ Ya, kirim untuk subsektor pilihan saya (Banks)\n2️⃣ Ya, kirim untuk watchlist saya\n3️⃣ Tidak usah, saya cek manual saja\n\nBalas dengan angka (1/2/3)."
+  },
+  {
+    "id": "optin_subsector_enabled",
+    "translation": "✅ *Notifikasi Pagi Aktif!* RichBuddy akan mengirimkan Radar Subsektor Banks otomatis setiap pagi jam 08:00 WIB."
+  },
+  {
+    "id": "optin_watchlist_enabled",
+    "translation": "✅ *Notifikasi Pagi Aktif!* RichBuddy akan mengirimkan Radar untuk Watchlist kamu otomatis setiap pagi jam 08:00 WIB."
+  },
+  {
+    "id": "optin_disabled",
+    "translation": "Pengiriman otomatis dinonaktifkan. Anda tetap dapat mengakses Radar Saham kapan saja melalui menu."
+  },
+  {
+    "id": "optin_invalid_choice",
+    "translation": "Pilihan tidak valid. Balas 1 untuk Subsektor, 2 untuk Watchlist, atau 3 untuk Manual."
+  }
+]
