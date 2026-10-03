@@ -3,6 +3,7 @@ package whatsapp_gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"go-rich-buddy-platform/config"
