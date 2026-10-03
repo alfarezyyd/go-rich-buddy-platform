@@ -121,6 +121,10 @@
     "translation": "Failed to fetch drill-down data for {{.Symbol}}"
   },
   {
+    "id": "drilldown_invalid_ticker",
+    "translation": "❌ Stock code *{{.Symbol}}* was not found in today's data.\n\nPlease ensure the stock code is correct (e.g. BBCA, BMRI, TLKM). Type *menu* to return to Radar Saham."
+  },
+  {
     "id": "agent_error",
     "translation": "Sorry, an error occurred while analyzing your question. Please ask something else about recommended stocks or type *menu*."
   },

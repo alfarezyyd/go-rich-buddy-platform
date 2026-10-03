@@ -99,12 +99,12 @@ func NewSectorsClient(restyClient *resty.Client) SectorsClient {
 	}
 }
 
-func (c *SectorsClientImpl) CheckDataFreshness(ctx context.Context) (string, error) {
-	if c.restyClient == nil {
+func (sectorClient *SectorsClientImpl) CheckDataFreshness(ctx context.Context) (string, error) {
+	if sectorClient.restyClient == nil {
 		return time.Now().AddDate(0, 0, -1).Format("2006-01-02"), nil
 	}
 
-	resp, err := c.restyClient.R().SetContext(ctx).Get("/v2/close/")
+	resp, err := sectorClient.restyClient.R().SetContext(ctx).Get("close/")
 	if err != nil || resp.IsError() {
 		// Fallback to yesterday date
 		return time.Now().AddDate(0, 0, -1).Format("2006-01-02"), nil
@@ -119,17 +119,17 @@ func (c *SectorsClientImpl) CheckDataFreshness(ctx context.Context) (string, err
 	return time.Now().AddDate(0, 0, -1).Format("2006-01-02"), nil
 }
 
-func (c *SectorsClientImpl) GetEligibleUniverse(ctx context.Context) ([]CompanyInfo, error) {
+func (sectorClient *SectorsClientImpl) GetEligibleUniverse(ctx context.Context) ([]CompanyInfo, error) {
 	// Fetch suspended symbols to exclude from universe (PRD §5.1)
-	suspendedMap, _ := c.GetSuspendedSymbols(ctx)
+	suspendedMap, _ := sectorClient.GetSuspendedSymbols(ctx)
 
 	// Minimum listing age: 30 days (PRD §5.1)
 	minListingDate := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
 
-	if c.restyClient != nil {
-		resp, err := c.restyClient.R().
+	if sectorClient.restyClient != nil {
+		resp, err := sectorClient.restyClient.R().
 			SetContext(ctx).
-			Get("/v2/companies?where=market_cap>1000000000000&limit=300")
+			Get("companies?where=market_cap>1000000000000&limit=300")
 		if err == nil && !resp.IsError() {
 			var companies []CompanyInfo
 			if err := json.Unmarshal(resp.Body(), &companies); err == nil && len(companies) > 0 {
@@ -166,13 +166,13 @@ func (c *SectorsClientImpl) GetEligibleUniverse(ctx context.Context) ([]CompanyI
 }
 
 // GetSuspendedSymbols returns a set of stock symbols suspended within the last 30 days (PRD §5.1).
-func (c *SectorsClientImpl) GetSuspendedSymbols(ctx context.Context) (map[string]bool, error) {
+func (sectorClient *SectorsClientImpl) GetSuspendedSymbols(ctx context.Context) (map[string]bool, error) {
 	result := make(map[string]bool)
-	if c.restyClient != nil {
+	if sectorClient.restyClient != nil {
 		// Fetch suspensions for the last 30 days
 		start := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
-		endpoint := fmt.Sprintf("/v2/suspensions?start=%s", start)
-		resp, err := c.restyClient.R().SetContext(ctx).Get(endpoint)
+		endpoint := fmt.Sprintf("suspensions?start=%s", start)
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get(endpoint)
 		if err == nil && !resp.IsError() {
 			var items []struct {
 				Symbol string `json:"symbol"`
@@ -190,10 +190,10 @@ func (c *SectorsClientImpl) GetSuspendedSymbols(ctx context.Context) (map[string
 	return result, nil
 }
 
-func (c *SectorsClientImpl) GetForeignFlow(ctx context.Context) (map[string]float64, error) {
+func (sectorClient *SectorsClientImpl) GetForeignFlow(ctx context.Context) (map[string]float64, error) {
 	result := make(map[string]float64)
-	if c.restyClient != nil {
-		resp, err := c.restyClient.R().SetContext(ctx).Get("/v2/foreign-flow/")
+	if sectorClient.restyClient != nil {
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get("foreign-flow/")
 		if err == nil && !resp.IsError() {
 			var items []ForeignFlowItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil && len(items) > 0 {
@@ -216,10 +216,10 @@ func (c *SectorsClientImpl) GetForeignFlow(ctx context.Context) (map[string]floa
 	return result, nil
 }
 
-func (c *SectorsClientImpl) GetMostTraded(ctx context.Context) (map[string]int, error) {
+func (sectorClient *SectorsClientImpl) GetMostTraded(ctx context.Context) (map[string]int, error) {
 	result := make(map[string]int)
-	if c.restyClient != nil {
-		resp, err := c.restyClient.R().SetContext(ctx).Get("/v2/most-traded?n_stock=50")
+	if sectorClient.restyClient != nil {
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get("most-traded?n_stock=50")
 		if err == nil && !resp.IsError() {
 			var items []MostTradedItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil && len(items) > 0 {
@@ -236,7 +236,7 @@ func (c *SectorsClientImpl) GetMostTraded(ctx context.Context) (map[string]int, 
 	}
 
 	universe := getFallbackUniverse()
-	r := rand.New(rand.NewSource(time.Now().UnixNano() / int64(time.Hour*24) + 1))
+	r := rand.New(rand.NewSource(time.Now().UnixNano()/int64(time.Hour*24) + 1))
 	perm := r.Perm(len(universe))
 	for rank, idx := range perm {
 		if rank < 60 {
@@ -246,10 +246,10 @@ func (c *SectorsClientImpl) GetMostTraded(ctx context.Context) (map[string]int, 
 	return result, nil
 }
 
-func (c *SectorsClientImpl) GetTopChanges(ctx context.Context) (map[string]int, error) {
+func (sectorClient *SectorsClientImpl) GetTopChanges(ctx context.Context) (map[string]int, error) {
 	result := make(map[string]int)
-	if c.restyClient != nil {
-		resp, err := c.restyClient.R().SetContext(ctx).Get("/v2/companies/top-changes?periods=1d,7d")
+	if sectorClient.restyClient != nil {
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get("companies/top-changes?periods=1d,7d")
 		if err == nil && !resp.IsError() {
 			var items []TopChangeItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil && len(items) > 0 {
@@ -266,7 +266,7 @@ func (c *SectorsClientImpl) GetTopChanges(ctx context.Context) (map[string]int, 
 	}
 
 	universe := getFallbackUniverse()
-	r := rand.New(rand.NewSource(time.Now().UnixNano() / int64(time.Hour*24) + 2))
+	r := rand.New(rand.NewSource(time.Now().UnixNano()/int64(time.Hour*24) + 2))
 	perm := r.Perm(len(universe))
 	for rank, idx := range perm {
 		if rank < 50 {
@@ -276,11 +276,11 @@ func (c *SectorsClientImpl) GetTopChanges(ctx context.Context) (map[string]int, 
 	return result, nil
 }
 
-func (c *SectorsClientImpl) GetCorporateActions(ctx context.Context, start, end string) (map[string]bool, error) {
+func (sectorClient *SectorsClientImpl) GetCorporateActions(ctx context.Context, start, end string) (map[string]bool, error) {
 	result := make(map[string]bool)
-	if c.restyClient != nil {
-		endpoint := fmt.Sprintf("/v2/corporate-actions?start=%s&end=%s", start, end)
-		resp, err := c.restyClient.R().SetContext(ctx).Get(endpoint)
+	if sectorClient.restyClient != nil {
+		endpoint := fmt.Sprintf("corporate-actions?start=%s&end=%s", start, end)
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get(endpoint)
 		if err == nil && !resp.IsError() {
 			var items []CorporateActionItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil && len(items) > 0 {
@@ -300,11 +300,11 @@ func (c *SectorsClientImpl) GetCorporateActions(ctx context.Context, start, end 
 	return result, nil
 }
 
-func (c *SectorsClientImpl) GetQuarterlyFinancialDates(ctx context.Context, since string) (map[string]bool, error) {
+func (sectorClient *SectorsClientImpl) GetQuarterlyFinancialDates(ctx context.Context, since string) (map[string]bool, error) {
 	result := make(map[string]bool)
-	if c.restyClient != nil {
-		endpoint := fmt.Sprintf("/v2/companies/quarterly-financial-dates?since=%s", since)
-		resp, err := c.restyClient.R().SetContext(ctx).Get(endpoint)
+	if sectorClient.restyClient != nil {
+		endpoint := fmt.Sprintf("companies/quarterly-financial-dates?since=%s", since)
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get(endpoint)
 		if err == nil && !resp.IsError() {
 			var items []QuarterlyFinancialDateItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil && len(items) > 0 {
@@ -322,11 +322,11 @@ func (c *SectorsClientImpl) GetQuarterlyFinancialDates(ctx context.Context, sinc
 	return result, nil
 }
 
-func (c *SectorsClientImpl) GetInstitutionalBrokerSummary(ctx context.Context, symbol string) (*BrokerSummaryItem, error) {
+func (sectorClient *SectorsClientImpl) GetInstitutionalBrokerSummary(ctx context.Context, symbol string) (*BrokerSummaryItem, error) {
 	symbol = strings.ToUpper(symbol)
-	if c.restyClient != nil {
-		endpoint := fmt.Sprintf("/v2/broker-summary/%s/top?cohort=institutional", symbol)
-		resp, err := c.restyClient.R().SetContext(ctx).Get(endpoint)
+	if sectorClient.restyClient != nil {
+		endpoint := fmt.Sprintf("broker-summary/%s/top?cohort=institutional", symbol)
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get(endpoint)
 		if err == nil && !resp.IsError() {
 			var item BrokerSummaryItem
 			if err := json.Unmarshal(resp.Body(), &item); err == nil {
@@ -349,11 +349,11 @@ func (c *SectorsClientImpl) GetInstitutionalBrokerSummary(ctx context.Context, s
 	}, nil
 }
 
-func (c *SectorsClientImpl) GetInsiderFilings(ctx context.Context, symbol string) ([]FilingItem, error) {
+func (sectorClient *SectorsClientImpl) GetInsiderFilings(ctx context.Context, symbol string) ([]FilingItem, error) {
 	symbol = strings.ToUpper(symbol)
-	if c.restyClient != nil {
-		endpoint := fmt.Sprintf("/v2/filings?symbol=%s", symbol)
-		resp, err := c.restyClient.R().SetContext(ctx).Get(endpoint)
+	if sectorClient.restyClient != nil {
+		endpoint := fmt.Sprintf("filings?symbol=%s", symbol)
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get(endpoint)
 		if err == nil && !resp.IsError() {
 			var items []FilingItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil {
@@ -376,16 +376,16 @@ func (c *SectorsClientImpl) GetInsiderFilings(ctx context.Context, symbol string
 	return []FilingItem{}, nil
 }
 
-func (c *SectorsClientImpl) GetNews(ctx context.Context, symbols []string) (map[string][]SectorsNewsItem, error) {
+func (sectorClient *SectorsClientImpl) GetNews(ctx context.Context, symbols []string) (map[string][]SectorsNewsItem, error) {
 	result := make(map[string][]SectorsNewsItem)
 	if len(symbols) == 0 {
 		return result, nil
 	}
 
-	if c.restyClient != nil {
+	if sectorClient.restyClient != nil {
 		joined := strings.Join(symbols, ",")
-		endpoint := fmt.Sprintf("/v2/news?symbols=%s", joined)
-		resp, err := c.restyClient.R().SetContext(ctx).Get(endpoint)
+		endpoint := fmt.Sprintf("news?symbols=%s", joined)
+		resp, err := sectorClient.restyClient.R().SetContext(ctx).Get(endpoint)
 		if err == nil && !resp.IsError() {
 			var items []SectorsNewsItem
 			if err := json.Unmarshal(resp.Body(), &items); err == nil && len(items) > 0 {

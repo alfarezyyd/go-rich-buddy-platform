@@ -47,7 +47,8 @@ const (
 	MsgManualTickerFetchError = "manual_ticker_fetch_error"
 
 	// Drill-down
-	MsgDrillDownFetchError = "drilldown_fetch_error"
+	MsgDrillDownFetchError    = "drilldown_fetch_error"
+	MsgDrillDownInvalidTicker = "drilldown_invalid_ticker"
 
 	// Agent / Stock Inquiry
 	MsgAgentError       = "agent_error"

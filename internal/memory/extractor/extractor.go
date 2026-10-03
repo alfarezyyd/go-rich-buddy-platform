@@ -155,11 +155,12 @@ func (extractor *Extractor) applyOperation(ctx context.Context, gormTransaction 
 		}
 
 		// Audit log.
+		afterJSON := fmt.Sprintf(`{"key":%q,"value":%q,"source":%q}`, op.Key, op.Value, op.Source)
 		_ = extractor.memoryRepo.AppendAuditLog(gormTransaction, &entity.MemoryAuditLog{
 			UserID:    userID,
 			Action:    "add",
 			Actor:     "system",
-			AfterJSON: fmt.Sprintf(`{"key":%q,"value":%q,"source":%q}`, op.Key, op.Value, op.Source),
+			AfterJSON: &afterJSON,
 		})
 
 	case "delete":

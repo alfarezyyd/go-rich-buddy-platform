@@ -34,12 +34,12 @@ type ChatMessage struct {
 	ID          uint64    `gorm:"column:id;primaryKey;autoIncrement"`
 	SessionID   uint64    `gorm:"column:session_id;index"`
 	UserID      uint64    `gorm:"column:user_id;index"`
-	WaMessageID string    `gorm:"column:wa_message_id;uniqueIndex;type:varchar(255)"`
+	WaMessageID *string   `gorm:"column:wa_message_id;uniqueIndex;type:varchar(255)"` // pointer so empty string maps to NULL
 	Role        string    `gorm:"column:role;type:varchar(20)"`
 	Content     string    `gorm:"column:content;type:text"`
 	ContentType string    `gorm:"column:content_type;type:varchar(50);default:'text'"`
 	Tokens      int       `gorm:"column:tokens;default:0"`
-	RefsJSON    string    `gorm:"column:refs_json;type:jsonb"`
+	RefsJSON    *string   `gorm:"column:refs_json;type:jsonb"` // pointer so empty string maps to NULL
 	Redacted    bool      `gorm:"column:redacted;default:false"`
 	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
 }
@@ -50,13 +50,13 @@ func (ChatMessage) TableName() string {
 
 // ConversationState holds the working state for a user (one row per user).
 type ConversationState struct {
-	UserID            uint64    `gorm:"column:user_id;primaryKey"`
-	LastRadarDate     string    `gorm:"column:last_radar_date;type:date"`
-	LastRadarSymbols  string    `gorm:"column:last_radar_symbols;type:jsonb"`
-	LastFocusSymbol   string    `gorm:"column:last_focus_symbol;type:varchar(10)"`
-	PendingAction     string    `gorm:"column:pending_action;type:varchar(100)"`
-	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime"`
-	ExpiresAt         *time.Time `gorm:"column:expires_at"`
+	UserID           uint64     `gorm:"column:user_id;primaryKey"`
+	LastRadarDate    *string    `gorm:"column:last_radar_date;type:date"`    // pointer → NULL when unset
+	LastRadarSymbols *string    `gorm:"column:last_radar_symbols;type:jsonb"` // pointer → NULL when unset
+	LastFocusSymbol  string     `gorm:"column:last_focus_symbol;type:varchar(10)"`
+	PendingAction    string     `gorm:"column:pending_action;type:varchar(100)"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	ExpiresAt        *time.Time `gorm:"column:expires_at"`
 }
 
 func (ConversationState) TableName() string {
@@ -65,20 +65,20 @@ func (ConversationState) TableName() string {
 
 // UserMemoryItem represents a single long-term memory entry for a user.
 type UserMemoryItem struct {
-	ID                 uint64         `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID             uint64         `gorm:"column:user_id;index"`
-	Kind               string         `gorm:"column:kind;type:varchar(20)"`
-	Key                string         `gorm:"column:key;type:varchar(100)"`
-	Value              string         `gorm:"column:value;type:text"`
-	Source             string         `gorm:"column:source;type:varchar(20);default:'stated'"`
-	Status             string         `gorm:"column:status;type:varchar(30);default:'active'"`
-	Confidence         float64        `gorm:"column:confidence;type:numeric(4,3);default:1.0"`
-	Importance         float64        `gorm:"column:importance;type:numeric(4,3);default:0.5"`
-	EvidenceMessageIDs string         `gorm:"column:evidence_message_ids;type:jsonb"` // JSON array of message IDs
-	FirstSeenAt        time.Time      `gorm:"column:first_seen_at;autoCreateTime"`
-	LastConfirmedAt    *time.Time     `gorm:"column:last_confirmed_at"`
-	LastUsedAt         *time.Time     `gorm:"column:last_used_at"`
-	ExpiresAt          *time.Time     `gorm:"column:expires_at"`
+	ID                 uint64     `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID             uint64     `gorm:"column:user_id;index"`
+	Kind               string     `gorm:"column:kind;type:varchar(20)"`
+	Key                string     `gorm:"column:key;type:varchar(100)"`
+	Value              string     `gorm:"column:value;type:text"`
+	Source             string     `gorm:"column:source;type:varchar(20);default:'stated'"`
+	Status             string     `gorm:"column:status;type:varchar(30);default:'active'"`
+	Confidence         float64    `gorm:"column:confidence;type:numeric(4,3);default:1.0"`
+	Importance         float64    `gorm:"column:importance;type:numeric(4,3);default:0.5"`
+	EvidenceMessageIDs *string    `gorm:"column:evidence_message_ids;type:jsonb"` // pointer → NULL when unset
+	FirstSeenAt        time.Time  `gorm:"column:first_seen_at;autoCreateTime"`
+	LastConfirmedAt    *time.Time `gorm:"column:last_confirmed_at"`
+	LastUsedAt         *time.Time `gorm:"column:last_used_at"`
+	ExpiresAt          *time.Time `gorm:"column:expires_at"`
 }
 
 func (UserMemoryItem) TableName() string {
@@ -100,13 +100,13 @@ func (UserLearningProgress) TableName() string {
 
 // UserInteractionEvent records significant user interactions for analytics and personalization.
 type UserInteractionEvent struct {
-	ID         uint64    `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID     uint64    `gorm:"column:user_id;index"`
-	Type       string    `gorm:"column:type;type:varchar(50)"`
-	Symbol     string    `gorm:"column:symbol;type:varchar(10)"`
-	SubSector  string    `gorm:"column:sub_sector;type:varchar(100)"`
-	RadarDate  string    `gorm:"column:radar_date;type:date"`
-	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
+	ID        uint64    `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID    uint64    `gorm:"column:user_id;index"`
+	Type      string    `gorm:"column:type;type:varchar(50)"`
+	Symbol    string    `gorm:"column:symbol;type:varchar(10)"`
+	SubSector string    `gorm:"column:sub_sector;type:varchar(100)"`
+	RadarDate *string   `gorm:"column:radar_date;type:date"` // pointer → NULL when unset
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
 }
 
 func (UserInteractionEvent) TableName() string {
@@ -121,8 +121,8 @@ type MemoryAuditLog struct {
 	Action     string    `gorm:"column:action;type:varchar(20)"`
 	ItemID     *uint64   `gorm:"column:item_id"`
 	Actor      string    `gorm:"column:actor;type:varchar(20)"`
-	BeforeJSON string    `gorm:"column:before_json;type:jsonb"`
-	AfterJSON  string    `gorm:"column:after_json;type:jsonb"`
+	BeforeJSON *string   `gorm:"column:before_json;type:jsonb"` // pointer → NULL when unset
+	AfterJSON  *string   `gorm:"column:after_json;type:jsonb"`  // pointer → NULL when unset
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
 }
 

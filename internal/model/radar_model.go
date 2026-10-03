@@ -23,7 +23,6 @@ type RadarResult struct {
 	TotalMonitored  int               `json:"total_monitored"`
 	Tickers         []RadarSignalItem `json:"tickers"`
 	SummaryNote     string            `json:"summary_note,omitempty"`
-	Disclaimer      string            `json:"disclaimer"`
 }
 
 type NewsItem struct {
@@ -43,7 +42,6 @@ type RadarDrillDownResult struct {
 	SummaryReason     string                 `json:"summary_reason"`
 	News              []NewsItem             `json:"news,omitempty"`
 	RawEvidence       map[string]interface{} `json:"raw_evidence,omitempty"`
-	Disclaimer        string                 `json:"disclaimer"`
 }
 
 type SetRadarPreferenceRequest struct {

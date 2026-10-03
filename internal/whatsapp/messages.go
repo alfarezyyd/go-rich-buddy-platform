@@ -44,7 +44,8 @@ const (
 	msgManualInvalidTicker    = pkgi18n.MsgManualInvalidTicker
 	msgManualTickerFetchError = pkgi18n.MsgManualTickerFetchError
 
-	msgDrillDownFetchError = pkgi18n.MsgDrillDownFetchError
+	msgDrillDownFetchError    = pkgi18n.MsgDrillDownFetchError
+	msgDrillDownInvalidTicker = pkgi18n.MsgDrillDownInvalidTicker
 
 	msgAgentError       = pkgi18n.MsgAgentError
 	msgAgentEmptyResult = pkgi18n.MsgAgentEmptyResult

@@ -80,10 +80,15 @@ func (memoryService *ServiceImpl) SaveIncomingMessage(
 		return nil, nil, fmt.Errorf("could not find or create chat session: %w", err)
 	}
 
+	var waID *string
+	if waMessageID != "" {
+		waID = &waMessageID
+	}
+
 	chatMessage := &entity.ChatMessage{
 		SessionID:   chatSession.ID,
 		UserID:      userID,
-		WaMessageID: waMessageID,
+		WaMessageID: waID,
 		Role:        role,
 		Content:     redactedContent,
 		ContentType: "text",
@@ -178,12 +183,13 @@ func (memoryService *ServiceImpl) ForgetMemoryByKey(ctx context.Context, gormTra
 		return deleteErr
 	}
 
+	beforeJSON := fmt.Sprintf(`{"key":%q,"value":%q}`, item.Key, item.Value)
 	return memoryService.memoryRepo.AppendAuditLog(gormTransaction, &entity.MemoryAuditLog{
 		UserID:     userID,
 		Action:     "delete",
 		ItemID:     &item.ID,
 		Actor:      "user",
-		BeforeJSON: fmt.Sprintf(`{"key":%q,"value":%q}`, item.Key, item.Value),
+		BeforeJSON: &beforeJSON,
 	})
 }
 
@@ -255,12 +261,16 @@ func (memoryService *ServiceImpl) RecordInteractionEvent(
 	userID uint64,
 	eventType, symbol, subSector, radarDate string,
 ) error {
+	var radarDatePtr *string
+	if radarDate != "" {
+		radarDatePtr = &radarDate
+	}
 	event := &entity.UserInteractionEvent{
 		UserID:    userID,
 		Type:      eventType,
 		Symbol:    symbol,
 		SubSector: subSector,
-		RadarDate: radarDate,
+		RadarDate: radarDatePtr,
 	}
 	return memoryService.memoryRepo.RecordInteractionEvent(gormTransaction, event)
 }

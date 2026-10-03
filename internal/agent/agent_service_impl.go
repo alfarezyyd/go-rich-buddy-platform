@@ -89,7 +89,7 @@ func (agentService *ServiceImpl) RunSession(ctx context.Context, session Session
 
 	for {
 		userMessage, isValid := session.NextUserMessage(ctx)
-		fmt.Println("Received user message:", userMessage)
+		logrus.Debugf("Received user message: %s", userMessage)
 		if !isValid {
 			return
 		}

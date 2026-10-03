@@ -39,11 +39,22 @@ func (sessionManager *Manager) UpdateWorkingState(
 		return err
 	}
 
+	var radarDatePtr *string
+	if lastRadarDate != "" {
+		radarDatePtr = &lastRadarDate
+	}
+
+	symbolsStr := string(symbolsJSON)
+	var symbolsPtr *string
+	if symbolsStr != "null" && symbolsStr != "[]" && symbolsStr != "" {
+		symbolsPtr = &symbolsStr
+	}
+
 	expiresAt := time.Now().Add(6 * time.Hour)
 	state := &entity.ConversationState{
 		UserID:           userID,
-		LastRadarDate:    lastRadarDate,
-		LastRadarSymbols: string(symbolsJSON),
+		LastRadarDate:    radarDatePtr,
+		LastRadarSymbols: symbolsPtr,
 		LastFocusSymbol:  lastFocusSymbol,
 		PendingAction:    pendingAction,
 		ExpiresAt:        &expiresAt,
@@ -62,12 +73,12 @@ func (sessionManager *Manager) ResolveSymbolReference(
 	inputBody string,
 ) string {
 	state, err := sessionManager.messageRepo.GetConversationState(gormTransaction, userID)
-	if err != nil || state == nil || state.LastRadarSymbols == "" {
+	if err != nil || state == nil || state.LastRadarSymbols == nil || *state.LastRadarSymbols == "" {
 		return ""
 	}
 
 	var symbols []string
-	if unmarshalErr := json.Unmarshal([]byte(state.LastRadarSymbols), &symbols); unmarshalErr != nil {
+	if unmarshalErr := json.Unmarshal([]byte(*state.LastRadarSymbols), &symbols); unmarshalErr != nil {
 		return ""
 	}
 

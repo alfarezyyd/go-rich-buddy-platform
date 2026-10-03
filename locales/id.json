@@ -121,6 +121,10 @@
     "translation": "Gagal mengambil data drill-down untuk {{.Symbol}}"
   },
   {
+    "id": "drilldown_invalid_ticker",
+    "translation": "❌ Kode saham *{{.Symbol}}* tidak ditemukan dalam data hari ini.\n\nPastikan kode saham yang Anda masukkan benar (contoh: BBCA, BMRI, TLKM). Ketik *menu* untuk kembali ke Radar Saham."
+  },
+  {
     "id": "agent_error",
     "translation": "Maaf, terjadi kendala saat menganalisis pertanyaan Anda. Silakan tanyakan hal lain seputar saham rekomendasi atau ketik *menu*."
   },

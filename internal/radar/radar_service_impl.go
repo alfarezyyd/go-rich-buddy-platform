@@ -3,6 +3,7 @@ package radar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -17,11 +18,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	// radarDisclaimer is appended to every Radar output message as required by the PRD.
-	// Note: The user-facing text is intentionally kept in Indonesian as the product targets Indonesian users.
-	radarDisclaimer = "⚠️ Radar ini adalah alat bantu belajar, bukan rekomendasi beli/jual. Data bersifat historis (closing hari sebelumnya) dan tidak menjamin pergerakan harga ke depan."
+// ErrTickerNotFound is returned by GetDrillDownExplanation when the requested
+// symbol has no signal data for today's date.
+var ErrTickerNotFound = errors.New("ticker not found in today's data")
 
+const (
 	// maxWatchlistPerUser enforces the PRD §5.4 limit of 10 tickers per user to control API credit costs.
 	maxWatchlistPerUser = 10
 )
@@ -263,23 +264,23 @@ func (radarServiceImpl *ServiceImpl) RunTier2(ctx context.Context, targetDate st
 	insiderBonusMap := make(map[string]int)
 	insiderFilingsMap := make(map[string][]FilingItem)
 
-	for _, sym := range targetSymbols {
-		brokerSummary, err := radarServiceImpl.sectorsClient.GetInstitutionalBrokerSummary(ctx, sym)
+	for _, targetSymbol := range targetSymbols {
+		brokerSummary, err := radarServiceImpl.sectorsClient.GetInstitutionalBrokerSummary(ctx, targetSymbol)
 		if err == nil && brokerSummary != nil {
 			brokerInfos = append(brokerInfos, brokerInfo{
-				symbol: sym,
+				symbol: targetSymbol,
 				ratio:  brokerSummary.Ratio,
 				item:   brokerSummary,
 			})
 		}
 
-		filings, err := radarServiceImpl.sectorsClient.GetInsiderFilings(ctx, sym)
+		filings, err := radarServiceImpl.sectorsClient.GetInsiderFilings(ctx, targetSymbol)
 		if err == nil && len(filings) > 0 {
-			insiderFilingsMap[sym] = filings
+			insiderFilingsMap[targetSymbol] = filings
 			// Insider buy threshold: ≥0.5% of outstanding shares (PRD §5.2 Signal 7)
-			for _, f := range filings {
-				if strings.ToLower(f.TransactionType) == "buy" && f.Percentage >= 0.5 {
-					insiderBonusMap[sym] = 100
+			for _, filling := range filings {
+				if strings.ToLower(filling.TransactionType) == "buy" && filling.Percentage >= 0.5 {
+					insiderBonusMap[targetSymbol] = 100
 					break
 				}
 			}
@@ -552,7 +553,6 @@ func (radarServiceImpl *ServiceImpl) GetRadarBySubSector(
 		TotalMonitored:  int(totalMonitored),
 		Tickers:         tickerItems,
 		SummaryNote:     summaryNote,
-		Disclaimer:      radarDisclaimer,
 	}, nil
 }
 
@@ -577,7 +577,6 @@ func (radarServiceImpl *ServiceImpl) GetRadarByWatchlist(
 			TotalMonitored:  0,
 			Tickers:         []model.RadarSignalItem{},
 			SummaryNote:     "Watchlist Anda masih kosong. Tambahkan kode saham ke watchlist Anda.",
-			Disclaimer:      radarDisclaimer,
 		}, nil
 	}
 
@@ -657,7 +656,6 @@ func (radarServiceImpl *ServiceImpl) GetRadarByWatchlist(
 		TotalMonitored:  totalWatchlist,
 		Tickers:         tickerItems,
 		SummaryNote:     summaryNote,
-		Disclaimer:      radarDisclaimer,
 	}, nil
 }
 
@@ -801,8 +799,8 @@ func (radarServiceImpl *ServiceImpl) GetRadarByManualTickers(
 	}
 
 	var cleanSymbols []string
-	for _, s := range symbols {
-		cleaned := strings.TrimSpace(strings.ToUpper(s))
+	for _, symbol := range symbols {
+		cleaned := strings.TrimSpace(strings.ToUpper(symbol))
 		if cleaned != "" {
 			cleanSymbols = append(cleanSymbols, cleaned)
 		}
@@ -815,8 +813,8 @@ func (radarServiceImpl *ServiceImpl) GetRadarByManualTickers(
 
 	// For any symbols not found in the signal table, create a placeholder entry (PRD §10 invalid/delisted handling)
 	foundMap := make(map[string]bool)
-	for _, s := range signals {
-		foundMap[s.Symbol] = true
+	for _, signal := range signals {
+		foundMap[signal.Symbol] = true
 	}
 	var notFoundSymbols []string
 	for _, sym := range cleanSymbols {
@@ -846,25 +844,25 @@ func (radarServiceImpl *ServiceImpl) GetRadarByManualTickers(
 	}
 
 	var tickerItems []model.RadarSignalItem
-	for _, s := range displayedSignals {
+	for _, displayedSignal := range displayedSignals {
 		note := ""
-		if s.CompositeScore >= 80 {
+		if displayedSignal.CompositeScore >= 80 {
 			note = "ada sinyal kuat"
-		} else if s.CompositeScore < 60 {
+		} else if displayedSignal.CompositeScore < 60 {
 			note = "tidak ada sinyal signifikan hari ini"
 		}
 		tickerItems = append(tickerItems, model.RadarSignalItem{
-			Symbol:                   s.Symbol,
-			SubSector:                s.SubSector,
-			ForeignFlowScore:         s.ForeignFlowScore,
-			InstitutionalBrokerScore: s.InstitutionalBrokerScore,
-			VolumeScore:              s.VolumeScore,
-			MomentumScore:            s.MomentumScore,
-			BonusCorporateAction:     s.BonusCorporateAction,
-			BonusQuarterlyReport:     s.BonusQuarterlyReport,
-			BonusInsiderBuy:          s.BonusInsiderBuy,
-			CompositeScore:           s.CompositeScore,
-			IndicatorEmoji:           getIndicatorEmoji(s.CompositeScore),
+			Symbol:                   displayedSignal.Symbol,
+			SubSector:                displayedSignal.SubSector,
+			ForeignFlowScore:         displayedSignal.ForeignFlowScore,
+			InstitutionalBrokerScore: displayedSignal.InstitutionalBrokerScore,
+			VolumeScore:              displayedSignal.VolumeScore,
+			MomentumScore:            displayedSignal.MomentumScore,
+			BonusCorporateAction:     displayedSignal.BonusCorporateAction,
+			BonusQuarterlyReport:     displayedSignal.BonusQuarterlyReport,
+			BonusInsiderBuy:          displayedSignal.BonusInsiderBuy,
+			CompositeScore:           displayedSignal.CompositeScore,
+			IndicatorEmoji:           getIndicatorEmoji(displayedSignal.CompositeScore),
 			Note:                     note,
 		})
 	}
@@ -892,7 +890,6 @@ func (radarServiceImpl *ServiceImpl) GetRadarByManualTickers(
 		TotalMonitored:  totalInput,
 		Tickers:         tickerItems,
 		SummaryNote:     summaryNote,
-		Disclaimer:      radarDisclaimer,
 	}, nil
 }
 
@@ -908,12 +905,13 @@ func (radarServiceImpl *ServiceImpl) GetDrillDownExplanation(
 		return nil, err
 	}
 
-	explanation, err := radarServiceImpl.radarRepository.GetExplanation(gormTransaction, date, upperSymbol)
-	var signal entity.SignalDaily
 	signals, _ := radarServiceImpl.radarRepository.GetSignalsBySymbols(gormTransaction, date, []string{upperSymbol})
-	if len(signals) > 0 {
-		signal = signals[0]
+	if len(signals) == 0 {
+		return nil, ErrTickerNotFound
 	}
+	signal := signals[0]
+
+	explanation, err := radarServiceImpl.radarRepository.GetExplanation(gormTransaction, date, upperSymbol)
 
 	var detectedSignals []string
 	var additionalContext []string
@@ -981,7 +979,6 @@ func (radarServiceImpl *ServiceImpl) GetDrillDownExplanation(
 		SummaryReason:     summaryReason,
 		News:              newsList,
 		RawEvidence:       rawEvidence,
-		Disclaimer:        radarDisclaimer,
 	}, nil
 }
 
@@ -1158,7 +1155,6 @@ func (radarServiceImpl *ServiceImpl) FormatRadarMessage(result *model.RadarResul
 
 	sb.WriteString("\nBalas angka (1-5) untuk melihat detail *\"Kenapa muncul?\"* atau tanyakan seputar saham di atas.")
 	sb.WriteString("\n_(Ketik *batal* untuk kembali ke menu utama)_\n\n")
-	sb.WriteString(result.Disclaimer)
 
 	return sb.String()
 }
@@ -1179,7 +1175,6 @@ func (radarServiceImpl *ServiceImpl) FormatDrillDownMessage(result *model.RadarD
 		sb.WriteString(fmt.Sprintf("%s\n", ctx))
 	}
 
-	sb.WriteString("\n" + result.Disclaimer)
 	sb.WriteString("\n\nAnda dapat menanyakan analisis mendalam tentang saham ini, atau balas angka lain untuk cek saham berikutnya.")
 	return sb.String()
 }

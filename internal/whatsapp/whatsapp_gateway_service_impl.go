@@ -2,7 +2,7 @@ package whatsapp_gateway
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
 	"go-rich-buddy-platform/config"
@@ -13,8 +13,8 @@ import (
 	"go-rich-buddy-platform/internal/model"
 	"go-rich-buddy-platform/internal/radar"
 	"go-rich-buddy-platform/internal/user"
-	pkgi18n "go-rich-buddy-platform/pkg/i18n"
 	whatsappSession "go-rich-buddy-platform/internal/whatsapp_session"
+	pkgi18n "go-rich-buddy-platform/pkg/i18n"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -84,6 +84,10 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 	}
 
 	phoneNumber := strings.Split(textMessage.Payload.From, "@")[0]
+	logrus.Debugf("Incoming WhatsApp message from: %s", phoneNumber)
+	if phoneNumber != "6289637577001" {
+		return nil
+	}
 	payloadBody := strings.TrimSpace(strings.ToLower(textMessage.Payload.Body))
 	rawBody := strings.TrimSpace(textMessage.Payload.Body)
 	waMessageID := textMessage.Payload.Id
@@ -116,7 +120,7 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 
 		// Handle deterministic memory control commands before the state machine.
 		if usr != nil {
-			if handled, handleErr := whatsappGatewayService.handleMemoryCommand(tx, usr.Id, phoneNumber, payloadBody, rawBody); handled {
+			if handled, handleErr := whatsappGatewayService.handleMemoryCommand(tx, usr.Id, phoneNumber, payloadBody); handled {
 				return handleErr
 			}
 		}
@@ -166,7 +170,7 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 
 // handleMemoryCommand processes deterministic memory control commands.
 // Returns (true, err) if a memory command was matched, (false, nil) otherwise.
-func (whatsappGatewayService *ServiceImpl) handleMemoryCommand(tx *gorm.DB, userID uint64, phone, payloadBody, rawBody string) (bool, error) {
+func (whatsappGatewayService *ServiceImpl) handleMemoryCommand(tx *gorm.DB, userID uint64, phone, payloadBody string) (bool, error) {
 	cmd, target := privacy.ParseMemoryCommand(payloadBody)
 	if cmd == privacy.CommandNone {
 		return false, nil
@@ -567,50 +571,15 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamResults(tx *gorm.DB, 
 		})
 	}
 
-	// Drill down check by number or ticker symbol
-	var targetSymbol string
-	numberToSymbol := map[string]string{
-		"1": "", "2": "", "3": "", "4": "", "5": "",
-	}
-
-	date, _ := whatsappGatewayService.radarService.RunTier1(context.Background(), "")
-	targetDate := ""
-	if date != nil {
-		targetDate = date.Date
-	}
-
-	// Check if input is a known IDX symbol (e.g. BBCA, BBRI, ANTM, BMRI, TLKM)
+	// Drill-down: user mengetik kode saham 4 huruf (misal: BBCA, BMRI, TLKM)
 	trimmed := strings.ToUpper(strings.TrimSpace(raw))
 	if len(trimmed) == 4 && !strings.Contains(trimmed, " ") {
-		targetSymbol = trimmed
-	} else if body == "1" || body == "2" || body == "3" || body == "4" || body == "5" {
-		// Lookup top signals for default subsector
-		signals, _ := whatsappGatewayService.radarService.GetRadarBySubSector(context.Background(), tx, 1, "Banks")
-		if signals != nil && len(signals.Tickers) > 0 {
-			idx := 0
-			fmt.Sscanf(body, "%d", &idx)
-			idx--
-			if idx >= 0 && idx < len(signals.Tickers) {
-				targetSymbol = signals.Tickers[idx].Symbol
-			}
-		}
-		if targetSymbol == "" {
-			defaultSymbols := []string{"BBCA", "BMRI", "BRIS", "BBRI", "BNGA"}
-			idx := 0
-			fmt.Sscanf(body, "%d", &idx)
-			idx--
-			if idx >= 0 && idx < len(defaultSymbols) {
-				targetSymbol = defaultSymbols[idx]
-			}
-		}
-	}
-	_ = numberToSymbol
-	_ = targetDate
-
-	if targetSymbol != "" {
-		drillDown, err := whatsappGatewayService.radarService.GetDrillDownExplanation(context.Background(), tx, targetSymbol)
+		drillDown, err := whatsappGatewayService.radarService.GetDrillDownExplanation(context.Background(), tx, trimmed)
 		if err != nil {
-			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgDrillDownFetchError, map[string]any{"Symbol": targetSymbol}))
+			if errors.Is(err, radar.ErrTickerNotFound) {
+				return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgDrillDownInvalidTicker, map[string]any{"Symbol": trimmed}))
+			}
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgDrillDownFetchError, map[string]any{"Symbol": trimmed}))
 		}
 		formatted := whatsappGatewayService.radarService.FormatDrillDownMessage(drillDown)
 		return whatsappGatewayService.transitionTo(tx, session, stateRadarSahamDrillDown, func() error {
@@ -618,7 +587,7 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamResults(tx *gorm.DB, 
 		})
 	}
 
-	// User asked natural language question about recommended stocks - answer using Analyst Agent!
+	// Pertanyaan natural language → Analyst Agent
 	return whatsappGatewayService.answerStockInquiry(tx, phone, raw)
 }
 
@@ -629,27 +598,23 @@ func (whatsappGatewayService *ServiceImpl) handleRadarSahamDrillDown(tx *gorm.DB
 		})
 	}
 
+	// Drill-down lanjutan: user mengetik kode saham 4 huruf lain
 	trimmed := strings.ToUpper(strings.TrimSpace(raw))
-	if (len(trimmed) == 4 && !strings.Contains(trimmed, " ")) || body == "1" || body == "2" || body == "3" || body == "4" || body == "5" {
-		targetSymbol := trimmed
-		if body == "1" || body == "2" || body == "3" || body == "4" || body == "5" {
-			defaultSymbols := []string{"BBCA", "BMRI", "BRIS", "BBRI", "BNGA"}
-			idx := 0
-			fmt.Sscanf(body, "%d", &idx)
-			idx--
-			if idx >= 0 && idx < len(defaultSymbols) {
-				targetSymbol = defaultSymbols[idx]
+	if len(trimmed) == 4 && !strings.Contains(trimmed, " ") {
+		drillDown, err := whatsappGatewayService.radarService.GetDrillDownExplanation(context.Background(), tx, trimmed)
+		if err != nil {
+			if errors.Is(err, radar.ErrTickerNotFound) {
+				return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgDrillDownInvalidTicker, map[string]any{"Symbol": trimmed}))
 			}
+			return whatsappGatewayService.sendMessage(phone, whatsappGatewayService.td(msgDrillDownFetchError, map[string]any{"Symbol": trimmed}))
 		}
-
-		drillDown, err := whatsappGatewayService.radarService.GetDrillDownExplanation(context.Background(), tx, targetSymbol)
-		if err == nil && drillDown != nil {
+		if drillDown != nil {
 			formatted := whatsappGatewayService.radarService.FormatDrillDownMessage(drillDown)
 			return whatsappGatewayService.sendMessage(phone, formatted)
 		}
 	}
 
-	// Natural language follow-up discussion regarding the stock
+	// Pertanyaan natural language → Analyst Agent
 	return whatsappGatewayService.answerStockInquiry(tx, phone, raw)
 }
 
