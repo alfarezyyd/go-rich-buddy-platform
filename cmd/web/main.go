@@ -44,6 +44,9 @@ func main() {
 		injector.WhatsappSessionModule,
 		injector.CacheModule,
 		injector.MemoryModule,
+		injector.OrderModule,
+		injector.MidtransModule,
+		injector.PaymentModule,
 		fx.Invoke(Run),
 	)
 

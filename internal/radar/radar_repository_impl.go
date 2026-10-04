@@ -166,3 +166,84 @@ func (radarRepositoryImpl *RepositoryImpl) GetAllActiveWatchlistSymbols(gormTran
 func (radarRepositoryImpl *RepositoryImpl) LogRequest(gormTransaction *gorm.DB, log *entity.RadarRequestLog) error {
 	return gormTransaction.Create(log).Error
 }
+
+func (radarRepositoryImpl *RepositoryImpl) SaveDiscoveryCandidates(tx *gorm.DB, candidates []entity.DiscoveryCandidateDaily) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "data_date"}, {Name: "symbol"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"lens_hits", "stage1_score", "in_pool_b", "in_finalist",
+		}),
+	}).CreateInBatches(candidates, 100).Error
+}
+
+func (radarRepositoryImpl *RepositoryImpl) SaveGateResults(tx *gorm.DB, gates []entity.GateResultDaily) error {
+	if len(gates) == 0 {
+		return nil
+	}
+	return tx.CreateInBatches(gates, 100).Error
+}
+
+func (radarRepositoryImpl *RepositoryImpl) SavePillarScores(tx *gorm.DB, scores []entity.PillarScoreDaily) error {
+	if len(scores) == 0 {
+		return nil
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "data_date"}, {Name: "symbol"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"sub_sector", "v", "q", "i", "h", "s", "t", "hgs_raw", "penalty_total", "hgs",
+			"data_completeness", "archetype", "secondary_archetype", "confidence_label", "is_finalist",
+		}),
+	}).CreateInBatches(scores, 100).Error
+}
+
+func (radarRepositoryImpl *RepositoryImpl) GetPillarScoresByDate(tx *gorm.DB, date string) ([]entity.PillarScoreDaily, error) {
+	var scores []entity.PillarScoreDaily
+	err := tx.Where("data_date = ?", date).Order("hgs DESC").Find(&scores).Error
+	return scores, err
+}
+
+func (radarRepositoryImpl *RepositoryImpl) GetTopPillarScoresBySubSector(tx *gorm.DB, date string, subSector string, limit int) ([]entity.PillarScoreDaily, error) {
+	var scores []entity.PillarScoreDaily
+	query := tx.Where("data_date = ?", date)
+	if subSector != "" && subSector != "all" {
+		query = query.Where("LOWER(sub_sector) = LOWER(?)", subSector)
+	}
+	err := query.Order("hgs DESC").Limit(limit).Find(&scores).Error
+	return scores, err
+}
+
+func (radarRepositoryImpl *RepositoryImpl) GetPillarScoresBySymbols(tx *gorm.DB, date string, symbols []string) ([]entity.PillarScoreDaily, error) {
+	var scores []entity.PillarScoreDaily
+	if len(symbols) == 0 {
+		return scores, nil
+	}
+	err := tx.Where("data_date = ? AND UPPER(symbol) IN (?)", date, symbols).
+		Order("hgs DESC").Find(&scores).Error
+	return scores, err
+}
+
+func (radarRepositoryImpl *RepositoryImpl) SaveCaseFile(tx *gorm.DB, caseFile *entity.CaseFileDaily) error {
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "data_date"}, {Name: "symbol"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"json", "evidence_hash", "explanation",
+		}),
+	}).Save(caseFile).Error
+}
+
+func (radarRepositoryImpl *RepositoryImpl) GetCaseFile(tx *gorm.DB, date string, symbol string) (*entity.CaseFileDaily, error) {
+	var cf entity.CaseFileDaily
+	err := tx.Where("data_date = ? AND UPPER(symbol) = UPPER(?)", date, symbol).First(&cf).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cf, nil
+}
+
+func (radarRepositoryImpl *RepositoryImpl) LogRadarPick(tx *gorm.DB, pick *entity.RadarPickLog) error {
+	return tx.Create(pick).Error
+}
+

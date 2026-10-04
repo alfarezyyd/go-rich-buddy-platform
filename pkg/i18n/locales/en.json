@@ -56,6 +56,30 @@
     "translation": "🎉 You selected the *{{.Tier}}* package.\n\n(Simulation: Payment successful! Your credit balance is now: {{.Credits}} credits)"
   },
   {
+    "id": "order_qris_prompt",
+    "translation": "🧾 *RichBuddy Payment Bill*\n\nPackage: *{{.PackageName}}*\nPrice: *Rp {{.Amount}}*\nOrder ID: `{{.OrderID}}`\n\nPlease scan the QRIS code above to pay.\n{{.DeeplinkInfo}}Once payment is verified, your credits will be updated automatically.\n_(Type *batal* to cancel order)_"
+  },
+  {
+    "id": "order_deeplink",
+    "translation": "📱 Or pay directly via app:\n{{.URL}}\n\n"
+  },
+  {
+    "id": "order_cancelled",
+    "translation": "Order `{{.OrderID}}` has been successfully cancelled. Returning to main menu..."
+  },
+  {
+    "id": "order_status_pending",
+    "translation": "Order status for `{{.OrderID}}`: *PENDING*\nPackage: *{{.PackageName}}*\nAmount: *Rp {{.Amount}}*\n\nPlease complete payment via QRIS or the link provided.\n_(Type *batal* to cancel order)_"
+  },
+  {
+    "id": "order_status_settled",
+    "translation": "🎉 Order `{{.OrderID}}` has been *SETTLED*!\nTier: *{{.Tier}}*\nCredit balance: {{.Credits}} credits."
+  },
+  {
+    "id": "order_no_pending",
+    "translation": "No pending orders found. Please select from the menu below:"
+  },
+  {
     "id": "radar_saham_menu",
     "translation": "📊 *Radar Saham*\nHow would you like to view stock picks?\n\n1️⃣ Sub-sector\n2️⃣ My Watchlist\n3️⃣ Search manually (type stock code)\n4️⃣ ⚙️ Morning Notification Settings (Opt-in)\n\nReply with a number (*1*, *2*, *3*, or *4*).\n_(Type *batal* anytime to return to main menu)_"
   },
@@ -125,6 +149,14 @@
     "translation": "❌ Stock code *{{.Symbol}}* was not found in today's data.\n\nPlease ensure the stock code is correct (e.g. BBCA, BMRI, TLKM). Type *menu* to return to Radar Saham."
   },
   {
+    "id": "drilldown_no_context",
+    "translation": "⚠️ No active radar data found in your session.\nPlease return to Radar Saham and run a radar first, then reply with a number to see stock details."
+  },
+  {
+    "id": "drilldown_out_of_range",
+    "translation": "⚠️ Invalid choice. Please reply with a number between *1* and *{{.Max}}* from the list above, or type a stock code directly (e.g. BBCA)."
+  },
+  {
     "id": "agent_error",
     "translation": "Sorry, an error occurred while analyzing your question. Please ask something else about recommended stocks or type *menu*."
   },
@@ -155,5 +187,25 @@
   {
     "id": "optin_invalid_choice",
     "translation": "Invalid choice. Reply 1 for Sub-sector, 2 for Watchlist, or 3 for Manual."
+  },
+  {
+    "id": "memory_empty",
+    "translation": "You have no saved preferences or memory yet. As you chat with RichBuddy, it will learn your preferences automatically.\n\n_(RichBuddy stores a summary of conversations and your preferences for personalization. Type 'memori saya' to view or delete them.)_"
+  },
+  {
+    "id": "memory_forget_invalid",
+    "translation": "Please specify what to forget. E.g.: *lupakan pref.tone* or *lupakan interest.topics*."
+  },
+  {
+    "id": "memory_forgot_confirm",
+    "translation": "✅ Done! That preference has been removed from memory."
+  },
+  {
+    "id": "chat_history_deleted",
+    "translation": "✅ Your chat history and conversation summaries have been deleted."
+  },
+  {
+    "id": "all_memory_deleted",
+    "translation": "✅ All your memory, preferences, learning progress, and interaction events have been deleted. RichBuddy will start fresh."
   }
 ]

@@ -23,8 +23,7 @@ func NewProtectedRoutes(
 
 ) *ProtectedRoutes {
 	return &ProtectedRoutes{
-		viperConfig: viperConfig,
-
+		viperConfig:    viperConfig,
 		userController: userController,
 	}
 }

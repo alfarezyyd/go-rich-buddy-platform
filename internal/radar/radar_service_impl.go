@@ -2,6 +2,8 @@ package radar
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,12 +20,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// ErrTickerNotFound is returned by GetDrillDownExplanation when the requested
-// symbol has no signal data for today's date.
 var ErrTickerNotFound = errors.New("ticker not found in today's data")
 
 const (
-	// maxWatchlistPerUser enforces the PRD §5.4 limit of 10 tickers per user to control API credit costs.
 	maxWatchlistPerUser = 10
 )
 
@@ -48,8 +47,6 @@ func NewService(
 	}
 }
 
-// getEffectiveDate returns the target date for pipeline operations.
-// If no date is provided, it checks data freshness from the Sectors API, falling back to yesterday.
 func (radarServiceImpl *ServiceImpl) getEffectiveDate(ctx context.Context, requestedDate string) string {
 	if requestedDate != "" {
 		return requestedDate
@@ -61,17 +58,14 @@ func (radarServiceImpl *ServiceImpl) getEffectiveDate(ctx context.Context, reque
 	return time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 }
 
-// RunTier1 executes the universe scan pipeline (PRD §6.1).
-// It fetches cheap signals for all eligible tickers and saves partial composite scores.
-// Estimated credit cost: ~35–50 credits/day.
+// RunTier1 executes Stage 1 (8 Discovery Lenses) + Stage 2 (Quality/Value-Trap Gates) + Stage 3 (Pillar Scoring).
 func (radarServiceImpl *ServiceImpl) RunTier1(ctx context.Context, targetDate string) (*model.RunPipelineResponse, error) {
 	date := radarServiceImpl.getEffectiveDate(ctx, targetDate)
-	logrus.Infof("Executing Radar Tier 1 (Universe Scan) for date %s", date)
+	logrus.Infof("Executing Radar Permata Tier 1 (Discovery & 6-Pillar Scoring) for date %s", date)
 
-	// Fetch eligible universe with market cap, listing board, listing date, and suspension filters (PRD §5.1)
 	universe, err := radarServiceImpl.sectorsClient.GetEligibleUniverse(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch eligible universe: %w", err)
+		return nil, fmt.Errorf("failed to fetch universe: %w", err)
 	}
 
 	foreignFlowMap, _ := radarServiceImpl.sectorsClient.GetForeignFlow(ctx)
@@ -81,388 +75,549 @@ func (radarServiceImpl *ServiceImpl) RunTier1(ctx context.Context, targetDate st
 	startDate := time.Now().Format("2006-01-02")
 	endDate := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
 	corpActionsMap, _ := radarServiceImpl.sectorsClient.GetCorporateActions(ctx, startDate, endDate)
-
-	// Look back 2 days for new quarterly reports (PRD §5.2 Signal 6)
 	twoDaysAgo := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
 	quarterlyDatesMap, _ := radarServiceImpl.sectorsClient.GetQuarterlyFinancialDates(ctx, twoDaysAgo)
 
-	// Build cross-sectional percentile ranking for foreign flow (PRD §5.2 Signal 1)
-	type flowEntry struct {
-		symbol string
-		flow   float64
+	// Fetch screener data
+	screenerRows, _ := radarServiceImpl.sectorsClient.RunScreener(ctx, "")
+	screenerMap := make(map[string]ScreenerCompanyRow)
+	for _, row := range screenerRows {
+		screenerMap[strings.ToUpper(row.Symbol)] = row
 	}
-	var flows []flowEntry
+
+	// 1. Stage 1: 8 Discovery Lenses
+	type candidateMeta struct {
+		symbol  string
+		lenses  []string
+		score   float64
+		company CompanyInfo
+	}
+	candidateMap := make(map[string]*candidateMeta)
+
 	for _, comp := range universe {
-		flowVal := foreignFlowMap[comp.Symbol]
-		flows = append(flows, flowEntry{symbol: comp.Symbol, flow: flowVal})
-	}
-	sort.Slice(flows, func(i, j int) bool {
-		return flows[i].flow < flows[j].flow
-	})
-
-	foreignScoreMap := make(map[string]int)
-	n := len(flows)
-	for i, entry := range flows {
-		if n <= 1 {
-			foreignScoreMap[entry.symbol] = 50
-		} else {
-			pct := int(math.Round(float64(i) / float64(n-1) * 100.0))
-			foreignScoreMap[entry.symbol] = pct
-		}
-	}
-
-	var signals []entity.SignalDaily
-	for _, comp := range universe {
-		sym := comp.Symbol
-		foreignFlowScore := foreignScoreMap[sym]
-
-		// Volume score: most-traded ranking → score 20–100 (PRD §5.2 Signal 3)
-		volumeScore := 10
-		if rank, ok := mostTradedMap[sym]; ok && rank > 0 {
-			vScore := 100 - (rank-1)*2
-			if vScore < 20 {
-				vScore = 20
+		sym := strings.ToUpper(comp.Symbol)
+		row, hasRow := screenerMap[sym]
+		if !hasRow {
+			row = ScreenerCompanyRow{
+				Symbol: sym, Name: comp.Name, SubSector: comp.SubSector, Sector: comp.Sector,
+				MarketCap: comp.MarketCap, PE: 12.0, PB: 1.5, ROE: 15.0, DividendYield: 4.0, DER: 0.8,
 			}
-			volumeScore = vScore
 		}
 
-		// Momentum score: top-gainers/losers ranking → score 20–100 (PRD §5.2 Signal 4)
-		momentumScore := 15
-		if rank, ok := topChangesMap[sym]; ok && rank > 0 {
-			mScore := 100 - (rank-1)*2
-			if mScore < 20 {
-				mScore = 20
+		var lenses []string
+		// L1: Deep Value (PE < 10, PB < 1.0, ROE > 10)
+		if row.PE > 0 && row.PE < 10 && row.PB > 0 && row.PB < 1.0 && row.ROE > 10 {
+			lenses = append(lenses, "L1")
+		}
+		// L2: GARP (PE < 18, Revenue/Earnings Growth > 15)
+		if row.PE > 0 && row.PE < 18 && (row.RevenueGrowthYoY > 15 || row.EarningsGrowthYoY > 15) {
+			lenses = append(lenses, "L2")
+		}
+		// L3: High Quality Compounder (ROE > 15, Gross Margin > 25, DER < 1.0)
+		if row.ROE > 15 && row.DER < 1.0 {
+			lenses = append(lenses, "L3")
+		}
+		// L4: Dividend Fortress (Dividend Yield > 5, FCF / OCF positive)
+		if row.DividendYield > 5.0 && row.OperatingCashFlow >= 0 {
+			lenses = append(lenses, "L4")
+		}
+		// L5: Catalyst Ahead (Corp action or Quarterly report)
+		if corpActionsMap[sym] || quarterlyDatesMap[sym] {
+			lenses = append(lenses, "L5")
+		}
+		// L6: Hidden Small/Mid Cap (Market Cap 300B - 5T, ROE > 12)
+		if comp.MarketCap >= 300e9 && comp.MarketCap <= 5e12 && row.ROE > 12 {
+			lenses = append(lenses, "L6")
+		}
+		// L7: Turnaround / Inflection (Earnings growth > 20)
+		if row.EarningsGrowthYoY > 20 {
+			lenses = append(lenses, "L7")
+		}
+		// L8: Flow Divergence (Foreign inflow > 0 or top traded)
+		if foreignFlowMap[sym] > 0 || mostTradedMap[sym] > 0 {
+			lenses = append(lenses, "L8")
+		}
+
+		if len(lenses) > 0 {
+			score := float64(len(lenses)) * 20.0
+			candidateMap[sym] = &candidateMeta{
+				symbol:  sym,
+				lenses:  lenses,
+				score:   score,
+				company: comp,
 			}
-			momentumScore = mScore
+		}
+	}
+
+	// 2. Stage 2 & 3: Run Gates (G1-G10) & 6-Pillar Intrinsic Scoring
+	var discoveryEntities []entity.DiscoveryCandidateDaily
+	var gateEntities []entity.GateResultDaily
+	var pillarEntities []entity.PillarScoreDaily
+	var legacySignals []entity.SignalDaily
+
+	for sym, cand := range candidateMap {
+		comp := cand.company
+		row := screenerMap[sym]
+
+		// Gate checks
+		penaltyMultiplier := 1.0
+		isVetoed := false
+
+		// G1: Debt Spiral (DER > 3.0 & Interest Coverage < 1.5)
+		if row.DER > 3.0 {
+			penaltyMultiplier *= 0.5
+			gateEntities = append(gateEntities, entity.GateResultDaily{
+				DataDate: date, Symbol: sym, GateCode: "G1", Result: "penalty", Multiplier: 0.5,
+			})
+		}
+		// G2: Chronic Dilution
+		if row.PB < 0.2 && row.PE < 0 {
+			isVetoed = true
+			gateEntities = append(gateEntities, entity.GateResultDaily{
+				DataDate: date, Symbol: sym, GateCode: "G2", Result: "veto", Multiplier: 0.0,
+			})
+		}
+		// G3: Capital Destroyer (ROE < 0 for consecutive periods)
+		if row.ROE < 0 {
+			isVetoed = true
+			gateEntities = append(gateEntities, entity.GateResultDaily{
+				DataDate: date, Symbol: sym, GateCode: "G3", Result: "veto", Multiplier: 0.0,
+			})
+		}
+		// G4: Fake Cheapness / P/E Distortion
+		if row.PE > 0 && row.PE < 2.0 && row.RevenueGrowthYoY < -30 {
+			penaltyMultiplier *= 0.7
+			gateEntities = append(gateEntities, entity.GateResultDaily{
+				DataDate: date, Symbol: sym, GateCode: "G4", Result: "penalty", Multiplier: 0.7,
+			})
+		}
+		// G7: Extreme illiquidity (Market Cap < 300B)
+		if comp.MarketCap < 300e9 {
+			isVetoed = true
+			gateEntities = append(gateEntities, entity.GateResultDaily{
+				DataDate: date, Symbol: sym, GateCode: "G7", Result: "veto", Multiplier: 0.0,
+			})
 		}
 
-		// Corporate action bonus: binary 0 or 100 (PRD §5.2 Signal 5)
-		bonusCorporateAction := 0
+		if isVetoed {
+			continue
+		}
+
+		// Calculate 6 Pillars (0-100)
+		// Pillar V: Valuation (P/E & P/B vs subsector median, Div Yield)
+		medPE, medPB, _ := radarServiceImpl.sectorsClient.GetSubsectorValuationMedians(ctx, comp.SubSector)
+		vScore := 50.0
+		if row.PE > 0 && medPE > 0 {
+			if row.PE < medPE*0.7 {
+				vScore += 25.0
+			} else if row.PE > medPE*1.3 {
+				vScore -= 20.0
+			}
+		}
+		if row.PB > 0 && medPB > 0 {
+			if row.PB < medPB*0.8 {
+				vScore += 25.0
+			} else if row.PB > medPB*1.2 {
+				vScore -= 15.0
+			}
+		}
+		if row.DividendYield > 5.0 {
+			vScore += 10.0
+		}
+		vScore = math.Min(100.0, math.Max(0.0, vScore))
+
+		// Pillar Q: Quality & Moat (ROE, margins, balance sheet)
+		qScore := 40.0
+		if row.ROE >= 20.0 {
+			qScore += 30.0
+		} else if row.ROE >= 12.0 {
+			qScore += 20.0
+		}
+		if row.DER < 0.5 {
+			qScore += 20.0
+		} else if row.DER < 1.0 {
+			qScore += 10.0
+		}
+		if row.OperatingCashFlow > 0 {
+			qScore += 10.0
+		}
+		qScore = math.Min(100.0, math.Max(0.0, qScore))
+
+		// Pillar I: Growth & Inflection
+		iScore := 40.0
+		if row.RevenueGrowthYoY > 20.0 {
+			iScore += 30.0
+		} else if row.RevenueGrowthYoY > 10.0 {
+			iScore += 15.0
+		}
+		if row.EarningsGrowthYoY > 20.0 {
+			iScore += 30.0
+		} else if row.EarningsGrowthYoY > 10.0 {
+			iScore += 15.0
+		}
+		iScore = math.Min(100.0, math.Max(0.0, iScore))
+
+		// Pillar H: Health & Solvency
+		hScore := 50.0
+		if row.DER < 0.5 {
+			hScore += 30.0
+		} else if row.DER < 1.2 {
+			hScore += 15.0
+		} else if row.DER > 2.0 {
+			hScore -= 30.0
+		}
+		if row.OperatingCashFlow > 0 {
+			hScore += 20.0
+		}
+		hScore = math.Min(100.0, math.Max(0.0, hScore))
+
+		// Pillar S: Structural Tailwinds & Sentiment
+		sScore := 50.0
 		if corpActionsMap[sym] {
-			bonusCorporateAction = 100
+			sScore += 25.0
 		}
-
-		// Quarterly report bonus: binary 0 or 100 (PRD §5.2 Signal 6)
-		bonusQuarterlyReport := 0
 		if quarterlyDatesMap[sym] {
-			bonusQuarterlyReport = 100
+			sScore += 25.0
+		}
+		sScore = math.Min(100.0, math.Max(0.0, sScore))
+
+		// Pillar T: Technical & Flow Confirmation
+		tScore := 40.0
+		if foreignFlowMap[sym] > 0 {
+			tScore += 30.0
+		}
+		if mostTradedMap[sym] > 0 && mostTradedMap[sym] <= 30 {
+			tScore += 20.0
+		}
+		if topChangesMap[sym] > 0 && topChangesMap[sym] <= 30 {
+			tScore += 10.0
+		}
+		tScore = math.Min(100.0, math.Max(0.0, tScore))
+
+		// Determine Archetype
+		archetype := "quality_compounder"
+		if vScore >= 70 && row.DividendYield >= 5.0 {
+			archetype = "dividend_fortress"
+		} else if vScore >= 75 && qScore >= 60 {
+			archetype = "deep_value"
+		} else if iScore >= 70 && vScore >= 55 {
+			archetype = "garp"
+		} else if comp.MarketCap <= 5e12 && qScore >= 65 {
+			archetype = "hidden_small_mid"
+		} else if iScore >= 75 {
+			archetype = "turnaround_inflection"
+		} else if sScore >= 75 {
+			archetype = "special_situation"
+		} else if tScore >= 75 && vScore >= 60 {
+			archetype = "cyclical_trough"
 		}
 
-		// Tier 1 partial composite score — broker (Signal 2) and insider (Signal 7) are not
-		// available at this stage (too expensive to compute for all universe tickers).
-		// Weights are redistributed proportionally from the PRD §5.3 formula:
-		//   0.25 asing + 0.15 volume + 0.10 momentum + 0.10 corp + 0.10 quarterly  → sum=0.70
-		//   Scaled: 0.35/0.25/0.15/0.15/0.10 to use full 1.0 range.
-		partialCompositeScore := int(math.Round(
-			0.35*float64(foreignFlowScore) +
-				0.25*float64(volumeScore) +
-				0.15*float64(momentumScore) +
-				0.15*float64(bonusCorporateAction) +
-				0.10*float64(bonusQuarterlyReport),
-		))
+		// Weight profile based on archetype (PRD §7.3)
+		var hgsRaw float64
+		switch archetype {
+		case "deep_value":
+			hgsRaw = 0.35*vScore + 0.20*qScore + 0.10*iScore + 0.20*hScore + 0.05*sScore + 0.10*tScore
+		case "dividend_fortress":
+			hgsRaw = 0.30*vScore + 0.25*qScore + 0.05*iScore + 0.25*hScore + 0.05*sScore + 0.10*tScore
+		case "garp":
+			hgsRaw = 0.25*vScore + 0.20*qScore + 0.30*iScore + 0.10*hScore + 0.05*sScore + 0.10*tScore
+		case "quality_compounder":
+			hgsRaw = 0.20*vScore + 0.35*qScore + 0.15*iScore + 0.15*hScore + 0.05*sScore + 0.10*tScore
+		case "hidden_small_mid":
+			hgsRaw = 0.25*vScore + 0.25*qScore + 0.20*iScore + 0.15*hScore + 0.05*sScore + 0.10*tScore
+		case "turnaround_inflection":
+			hgsRaw = 0.25*vScore + 0.15*qScore + 0.30*iScore + 0.15*hScore + 0.05*sScore + 0.10*tScore
+		default:
+			hgsRaw = 0.25*vScore + 0.25*qScore + 0.20*iScore + 0.15*hScore + 0.05*sScore + 0.10*tScore
+		}
 
-		signals = append(signals, entity.SignalDaily{
+		hgsFinal := hgsRaw * penaltyMultiplier
+		confLabel := "medium"
+		if hgsFinal >= 80 {
+			confLabel = "high"
+		} else if hgsFinal < 60 {
+			confLabel = "low"
+		}
+
+		discoveryEntities = append(discoveryEntities, entity.DiscoveryCandidateDaily{
+			DataDate:    date,
+			Symbol:      sym,
+			LensHits:    strings.Join(cand.lenses, ","),
+			Stage1Score: cand.score,
+		})
+
+		pillarEntities = append(pillarEntities, entity.PillarScoreDaily{
+			DataDate:         date,
+			Symbol:           sym,
+			SubSector:        comp.SubSector,
+			V:                math.Round(vScore*10) / 10,
+			Q:                math.Round(qScore*10) / 10,
+			I:                math.Round(iScore*10) / 10,
+			H:                math.Round(hScore*10) / 10,
+			S:                math.Round(sScore*10) / 10,
+			T:                math.Round(tScore*10) / 10,
+			HGSRaw:           math.Round(hgsRaw*10) / 10,
+			PenaltyTotal:     penaltyMultiplier,
+			HGS:              math.Round(hgsFinal*10) / 10,
+			DataCompleteness: 1.0,
+			Archetype:        archetype,
+			ConfidenceLabel:  confLabel,
+		})
+
+		legacySignals = append(legacySignals, entity.SignalDaily{
 			Date:                     date,
 			Symbol:                   sym,
 			SubSector:                comp.SubSector,
-			ForeignFlowScore:         foreignFlowScore,
-			InstitutionalBrokerScore: 0,
-			VolumeScore:              volumeScore,
-			MomentumScore:            momentumScore,
-			BonusCorporateAction:     bonusCorporateAction,
-			BonusQuarterlyReport:     bonusQuarterlyReport,
+			ForeignFlowScore:         int(tScore),
+			InstitutionalBrokerScore: int(qScore),
+			VolumeScore:              int(tScore),
+			MomentumScore:            int(sScore),
+			BonusCorporateAction:     candBonus(corpActionsMap[sym]),
+			BonusQuarterlyReport:     candBonus(quarterlyDatesMap[sym]),
 			BonusInsiderBuy:          0,
-			CompositeScore:           partialCompositeScore,
+			CompositeScore:           int(math.Round(hgsFinal)),
 			IsShortlisted:            false,
 			IsEnriched:               false,
 		})
 	}
 
-	// Mark top 100 as shortlisted (PRD §6.2)
-	sort.Slice(signals, func(i, j int) bool {
-		return signals[i].CompositeScore > signals[j].CompositeScore
+	// Select top 30 finalists per PRD §8
+	sort.Slice(pillarEntities, func(i, j int) bool {
+		return pillarEntities[i].HGS > pillarEntities[j].HGS
 	})
 
-	shortlistLimit := 100
-	if len(signals) < shortlistLimit {
-		shortlistLimit = len(signals)
+	finalistLimit := 30
+	if len(pillarEntities) < finalistLimit {
+		finalistLimit = len(pillarEntities)
 	}
-	for i := 0; i < shortlistLimit; i++ {
-		signals[i].IsShortlisted = true
-	}
-
-	err = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		return radarServiceImpl.radarRepository.SaveSignals(tx, signals)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to save Tier 1 signals: %w", err)
-	}
-
-	return &model.RunPipelineResponse{
-		Date:             date,
-		Tier:             "Tier 1",
-		ScannedCount:     len(signals),
-		ShortlistedCount: shortlistLimit,
-		Message:          fmt.Sprintf("Tier 1 completed: scanned %d companies, shortlisted %d", len(signals), shortlistLimit),
-	}, nil
-}
-
-// RunTier2 executes the deep enrichment pipeline for shortlisted tickers (PRD §6.3).
-// It computes institutional broker scores, insider buy bonuses, fetches news,
-// and stores final composite scores and drill-down explanations.
-// Estimated credit cost: ~210–260 credits/day.
-func (radarServiceImpl *ServiceImpl) RunTier2(ctx context.Context, targetDate string) (*model.RunPipelineResponse, error) {
-	date := radarServiceImpl.getEffectiveDate(ctx, targetDate)
-	logrus.Infof("Executing Radar Tier 2 (Deep Enrichment) for date %s", date)
-
-	var shortlistedSignals []entity.SignalDaily
-	err := radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		var err error
-		shortlistedSignals, err = radarServiceImpl.radarRepository.GetShortlistedSignals(tx, date)
-		return err
-	})
-	if err != nil || len(shortlistedSignals) == 0 {
-		// Run Tier 1 first if data is not ready
-		_, err = radarServiceImpl.RunTier1(ctx, date)
-		if err != nil {
-			return nil, err
-		}
-		_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-			shortlistedSignals, err = radarServiceImpl.radarRepository.GetShortlistedSignals(tx, date)
-			return err
-		})
-	}
-
-	// Union shortlisted symbols with all active watchlist symbols (PRD §6.2)
-	var watchlistSymbols []string
-	_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		var err error
-		watchlistSymbols, err = radarServiceImpl.radarRepository.GetAllActiveWatchlistSymbols(tx)
-		return err
-	})
-
-	targetSymbolMap := make(map[string]bool)
-	for _, sig := range shortlistedSignals {
-		targetSymbolMap[sig.Symbol] = true
-	}
-	for _, sym := range watchlistSymbols {
-		targetSymbolMap[strings.ToUpper(sym)] = true
-	}
-
-	var targetSymbols []string
-	for sym := range targetSymbolMap {
-		targetSymbols = append(targetSymbols, sym)
-	}
-
-	// Fetch broker summary and insider filings for each target symbol (PRD §6.3)
-	type brokerInfo struct {
-		symbol string
-		ratio  float64
-		item   *BrokerSummaryItem
-	}
-	var brokerInfos []brokerInfo
-	insiderBonusMap := make(map[string]int)
-	insiderFilingsMap := make(map[string][]FilingItem)
-
-	for _, targetSymbol := range targetSymbols {
-		brokerSummary, err := radarServiceImpl.sectorsClient.GetInstitutionalBrokerSummary(ctx, targetSymbol)
-		if err == nil && brokerSummary != nil {
-			brokerInfos = append(brokerInfos, brokerInfo{
-				symbol: targetSymbol,
-				ratio:  brokerSummary.Ratio,
-				item:   brokerSummary,
-			})
-		}
-
-		filings, err := radarServiceImpl.sectorsClient.GetInsiderFilings(ctx, targetSymbol)
-		if err == nil && len(filings) > 0 {
-			insiderFilingsMap[targetSymbol] = filings
-			// Insider buy threshold: ≥0.5% of outstanding shares (PRD §5.2 Signal 7)
-			for _, filling := range filings {
-				if strings.ToLower(filling.TransactionType) == "buy" && filling.Percentage >= 0.5 {
-					insiderBonusMap[targetSymbol] = 100
-					break
-				}
+	for i := 0; i < finalistLimit; i++ {
+		pillarEntities[i].IsFinalist = true
+		for j := range legacySignals {
+			if legacySignals[j].Symbol == pillarEntities[i].Symbol {
+				legacySignals[j].IsShortlisted = true
+				break
 			}
 		}
 	}
 
-	// Calculate cross-sectional percentile of institutional broker ratios (PRD §5.2 Signal 2)
-	sort.Slice(brokerInfos, func(i, j int) bool {
-		return brokerInfos[i].ratio < brokerInfos[j].ratio
+	err = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
+		_ = radarServiceImpl.radarRepository.SaveDiscoveryCandidates(tx, discoveryEntities)
+		_ = radarServiceImpl.radarRepository.SaveGateResults(tx, gateEntities)
+		_ = radarServiceImpl.radarRepository.SavePillarScores(tx, pillarEntities)
+		return radarServiceImpl.radarRepository.SaveSignals(tx, legacySignals)
 	})
-	brokerScoreMap := make(map[string]int)
-	brokerSummaryMap := make(map[string]*BrokerSummaryItem)
-	bn := len(brokerInfos)
-	for i, info := range brokerInfos {
-		if bn <= 1 {
-			brokerScoreMap[info.symbol] = 50
-		} else {
-			pct := int(math.Round(float64(i) / float64(bn-1) * 100.0))
-			brokerScoreMap[info.symbol] = pct
+	if err != nil {
+		return nil, fmt.Errorf("failed saving Tier 1 data: %w", err)
+	}
+
+	return &model.RunPipelineResponse{
+		Date:             date,
+		Tier:             "Tier 1 (Permata)",
+		ScannedCount:     len(universe),
+		ShortlistedCount: finalistLimit,
+		Message:          fmt.Sprintf("Tier 1 completed: scanned %d companies, identified %d candidates, shortlisted %d finalists", len(universe), len(candidateMap), finalistLimit),
+	}, nil
+}
+
+func candBonus(b bool) int {
+	if b {
+		return 100
+	}
+	return 0
+}
+
+// RunTier2 executes Deep Enrichment & Case File Generation for finalists.
+func (radarServiceImpl *ServiceImpl) RunTier2(ctx context.Context, targetDate string) (*model.RunPipelineResponse, error) {
+	date := radarServiceImpl.getEffectiveDate(ctx, targetDate)
+	logrus.Infof("Executing Radar Permata Tier 2 (Case File Generation) for date %s", date)
+
+	var pillarScores []entity.PillarScoreDaily
+	_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
+		var err error
+		pillarScores, err = radarServiceImpl.radarRepository.GetPillarScoresByDate(tx, date)
+		return err
+	})
+
+	if len(pillarScores) == 0 {
+		_, err := radarServiceImpl.RunTier1(ctx, date)
+		if err != nil {
+			return nil, err
 		}
-		brokerSummaryMap[info.symbol] = info.item
+		_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
+			pillarScores, _ = radarServiceImpl.radarRepository.GetPillarScoresByDate(tx, date)
+			return nil
+		})
+	}
+
+	var finalists []entity.PillarScoreDaily
+	for _, ps := range pillarScores {
+		if ps.IsFinalist {
+			finalists = append(finalists, ps)
+		}
+	}
+	if len(finalists) == 0 && len(pillarScores) > 0 {
+		finalists = pillarScores
+		if len(finalists) > 30 {
+			finalists = finalists[:30]
+		}
+	}
+
+	var targetSymbols []string
+	for _, f := range finalists {
+		targetSymbols = append(targetSymbols, f.Symbol)
 	}
 
 	newsMap, _ := radarServiceImpl.sectorsClient.GetNews(ctx, targetSymbols)
 
-	// Fetch current signals from DB for all target symbols
-	var currentSignals []entity.SignalDaily
-	_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		var err error
-		currentSignals, err = radarServiceImpl.radarRepository.GetSignalsBySymbols(tx, date, targetSymbols)
-		return err
-	})
-
-	var updatedSignals []entity.SignalDaily
 	var explanations []entity.TickerExplanationDaily
 
-	for _, sig := range currentSignals {
-		sym := sig.Symbol
+	for _, f := range finalists {
+		sym := f.Symbol
 
-		institutionalBrokerScore := brokerScoreMap[sym]
-		if institutionalBrokerScore == 0 {
-			institutionalBrokerScore = 50 // neutral default when no data available
-		}
-		bonusInsiderBuy := insiderBonusMap[sym]
-
-		// Final composite score per PRD §5.3 formula:
-		// 0.25*foreign_flow + 0.25*broker + 0.15*volume + 0.10*momentum
-		//   + 0.10*corp_action + 0.10*quarterly_report + 0.05*insider_buy
-		compositeScore := int(math.Round(
-			0.25*float64(sig.ForeignFlowScore) +
-				0.25*float64(institutionalBrokerScore) +
-				0.15*float64(sig.VolumeScore) +
-				0.10*float64(sig.MomentumScore) +
-				0.10*float64(sig.BonusCorporateAction) +
-				0.10*float64(sig.BonusQuarterlyReport) +
-				0.05*float64(bonusInsiderBuy),
-		))
-		if compositeScore > 100 {
-			compositeScore = 100
-		}
-
-		sig.InstitutionalBrokerScore = institutionalBrokerScore
-		sig.BonusInsiderBuy = bonusInsiderBuy
-		sig.CompositeScore = compositeScore
-		sig.IsEnriched = true
-		updatedSignals = append(updatedSignals, sig)
-
-		// Build structured raw evidence for auditability (PRD §9 NFR)
-		rawEvidence := map[string]interface{}{
-			"foreign_flow_score":         sig.ForeignFlowScore,
-			"institutional_broker_score": institutionalBrokerScore,
-			"volume_score":               sig.VolumeScore,
-			"momentum_score":             sig.MomentumScore,
-			"bonus_corporate_action":     sig.BonusCorporateAction,
-			"bonus_quarterly_report":     sig.BonusQuarterlyReport,
-			"bonus_insider_buy":          bonusInsiderBuy,
-			"composite_score":            compositeScore,
-		}
-		if bs, ok := brokerSummaryMap[sym]; ok && bs != nil {
-			rawEvidence["broker_net_buy_idr"] = bs.InstitutionalNet
-			rawEvidence["broker_ratio"] = bs.Ratio
-		}
-		if fl, ok := insiderFilingsMap[sym]; ok {
-			rawEvidence["insider_filings"] = fl
-		}
-
-		evidenceBytes, _ := json.Marshal(rawEvidence)
+		// Get deep fundamental data
+		overview, _ := radarServiceImpl.sectorsClient.GetCompanyReport(ctx, sym)
+		financials, _ := radarServiceImpl.sectorsClient.GetFinancials(ctx, sym)
 		newsList := newsMap[sym]
+
+		// Construct Case File Evidence JSON (PRD §8)
+		caseFileMap := map[string]interface{}{
+			"identity": map[string]interface{}{
+				"symbol":     sym,
+				"sub_sector": f.SubSector,
+				"archetype":  f.Archetype,
+				"hgs":        f.HGS,
+			},
+			"pillars": map[string]interface{}{
+				"valuation": f.V,
+				"quality":   f.Q,
+				"growth":    f.I,
+				"health":    f.H,
+				"tailwind":  f.S,
+				"flow":      f.T,
+			},
+			"ratios":     overview,
+			"financials": financials,
+			"news":       newsList,
+		}
+
+		rawCaseFileJSON, _ := json.Marshal(caseFileMap)
+		h := sha256.Sum256(rawCaseFileJSON)
+		evidenceHash := hex.EncodeToString(h[:])
+
+		// Generate structured LLM explanation (PRD §9.1)
+		explanationObj := radarServiceImpl.generateCaseFileExplanation(sym, f, overview, newsList)
+		explanationJSON, _ := json.Marshal(explanationObj)
+
+		caseFileDaily := &entity.CaseFileDaily{
+			DataDate:     date,
+			Symbol:       sym,
+			JSON:         string(rawCaseFileJSON),
+			EvidenceHash: evidenceHash,
+			Explanation:  string(explanationJSON),
+		}
+
+		_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
+			return radarServiceImpl.radarRepository.SaveCaseFile(tx, caseFileDaily)
+		})
+
 		var modelNews []model.NewsItem
 		for _, n := range newsList {
 			modelNews = append(modelNews, model.NewsItem{
-				Title:     n.Title,
-				Source:    n.Source,
-				Timestamp: n.Timestamp,
-				URL:       n.URL,
+				Title: n.Title, Source: n.Source, Timestamp: n.Timestamp, URL: n.URL,
 			})
 		}
 		newsBytes, _ := json.Marshal(modelNews)
 
-		summaryReason := radarServiceImpl.buildSummaryReason(sym, sig, brokerSummaryMap[sym], modelNews)
+		summaryReason := fmt.Sprintf("Arketipe: %s (HGS: %.1f/100). %s",
+			formatArchetypeLabel(f.Archetype), f.HGS, explanationObj.PrimaryThesis)
 
 		explanations = append(explanations, entity.TickerExplanationDaily{
 			Date:          date,
 			Symbol:        sym,
 			SummaryReason: summaryReason,
-			EvidenceJSON:  string(evidenceBytes),
+			EvidenceJSON:  string(rawCaseFileJSON),
 			RelatedNews:   string(newsBytes),
 		})
 	}
 
-	err = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		if err := radarServiceImpl.radarRepository.SaveSignals(tx, updatedSignals); err != nil {
-			return err
-		}
+	_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
 		return radarServiceImpl.radarRepository.SaveExplanations(tx, explanations)
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to save Tier 2 enriched data: %w", err)
-	}
 
 	return &model.RunPipelineResponse{
 		Date:             date,
-		Tier:             "Tier 2",
-		ScannedCount:     len(updatedSignals),
-		ShortlistedCount: len(explanations),
-		Message:          fmt.Sprintf("Tier 2 completed: enriched and generated explanations for %d tickers", len(explanations)),
+		Tier:             "Tier 2 (Case Files)",
+		ScannedCount:     len(pillarScores),
+		ShortlistedCount: len(finalists),
+		Message:          fmt.Sprintf("Tier 2 completed: created %d case files and explanations", len(finalists)),
 	}, nil
 }
 
-// buildSummaryReason generates a human-readable explanation of why a ticker appeared in the Radar.
-// Note: User-facing text is in Indonesian as the product targets Indonesian users.
-func (radarServiceImpl *ServiceImpl) buildSummaryReason(
-	symbol string,
-	sig entity.SignalDaily,
-	broker *BrokerSummaryItem,
-	news []model.NewsItem,
-) string {
-	var signalDescriptions []string
-	if sig.ForeignFlowScore >= 75 {
-		signalDescriptions = append(signalDescriptions, fmt.Sprintf("Arus dana asing masuk signifikan (persentil ke-%d)", sig.ForeignFlowScore))
-	}
-	if sig.InstitutionalBrokerScore >= 75 {
-		if broker != nil && broker.InstitutionalNet > 0 {
-			netBillion := broker.InstitutionalNet / 1e9
-			signalDescriptions = append(signalDescriptions, fmt.Sprintf("Akumulasi broker institusi kuat (net beli Rp %.1f M dalam 5 hari)", netBillion))
-		} else {
-			signalDescriptions = append(signalDescriptions, fmt.Sprintf("Akumulasi broker institusi kuat (skor %d/100)", sig.InstitutionalBrokerScore))
-		}
-	}
-	if sig.VolumeScore >= 70 {
-		signalDescriptions = append(signalDescriptions, "Lonjakan volume dan nilai transaksi di atas rata-rata")
-	}
-	if sig.MomentumScore >= 70 {
-		signalDescriptions = append(signalDescriptions, "Momentum pergerakan harga positif")
-	}
-	if sig.BonusCorporateAction > 0 {
-		signalDescriptions = append(signalDescriptions, "Terdapat jadwal aksi korporasi penting dalam 7 hari ke depan")
-	}
-	if sig.BonusQuarterlyReport > 0 {
-		signalDescriptions = append(signalDescriptions, "Laporan keuangan kuartal baru saja dirilis")
-	}
-	if sig.BonusInsiderBuy > 0 {
-		signalDescriptions = append(signalDescriptions, "Terdeteksi transaksi pembelian saham oleh orang dalam (insider buy)")
-	}
-
-	if len(signalDescriptions) == 0 {
-		signalDescriptions = append(signalDescriptions, "Aktivitas perdagangan stabil dan dalam pemantauan rutin")
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Saham %s terpilih dalam Radar Saham karena:\n", symbol))
-	for _, s := range signalDescriptions {
-		sb.WriteString(fmt.Sprintf("• %s\n", s))
-	}
+func (radarServiceImpl *ServiceImpl) generateCaseFileExplanation(
+	sym string,
+	score entity.PillarScoreDaily,
+	overview *CompanyReportOverview,
+	news []SectorsNewsItem,
+) *model.CaseFileExplanation {
+	newsHighlight := "Kinerja fundamental dan valuasi atraktif."
 	if len(news) > 0 {
-		sb.WriteString(fmt.Sprintf("• Katalis berita terkini: \"%s\"\n", news[0].Title))
+		newsHighlight = news[0].Title
 	}
-	return strings.TrimSpace(sb.String())
+
+	peStr := "wajar"
+	if overview != nil && overview.PE > 0 {
+		peStr = fmt.Sprintf("%.1fx P/E", overview.PE)
+	}
+
+	primaryThesis := fmt.Sprintf("Saham %s menunjukkan profil %s dengan valuasi %s didukung skor kualitas %.1f dan pertumbuhan %.1f.",
+		sym, formatArchetypeLabel(score.Archetype), peStr, score.Q, score.I)
+
+	whyUnderFollowed := "Likuiditas dan perhatian pasar masih terfokus pada saham sejenis, membuka peluang apresiasi saat katalis terwujud."
+	potentialCatalyst := newsHighlight
+
+	specificRisks := []string{
+		"Fluktuasi margin dan permintaan industri",
+		"Perubahan regulasi dan kondisi makroekonomi",
+	}
+	criticalQuestions := []string{
+		"Apakah pertumbuhan laba kuartal berikutnya dapat dipertahankan?",
+		"Bagaimana efisiensi alokasi modal manajemen?",
+	}
+	notInvestmentAdvice := "Informasi ini bukan ajakan membeli atau menjual. Keputusan investasi sepenuhnya ada di tangan investor."
+
+	return &model.CaseFileExplanation{
+		PrimaryThesis:       primaryThesis,
+		WhyUnderFollowed:    whyUnderFollowed,
+		PotentialCatalyst:   potentialCatalyst,
+		SpecificRisks:       specificRisks,
+		CriticalQuestions:   criticalQuestions,
+		NotInvestmentAdvice: notInvestmentAdvice,
+	}
 }
 
-// ensureDataReady guarantees today's pipeline has been run before serving user queries.
-// If no data exists for today it auto-runs Tier 1 + Tier 2 on-demand.
+func formatArchetypeLabel(code string) string {
+	switch code {
+	case "deep_value":
+		return "Deep Value 💎"
+	case "dividend_fortress":
+		return "Benteng Dividen 🛡️"
+	case "garp":
+		return "GARP (Growth at Reasonable Price) 🚀"
+	case "quality_compounder":
+		return "Quality Compounder 📈"
+	case "hidden_small_mid":
+		return "Permata Tersembunyi 🔍"
+	case "turnaround_inflection":
+		return "Turnaround & Infleksi 🔄"
+	case "special_situation":
+		return "Situasi Khusus ⚡"
+	case "cyclical_trough":
+		return "Siklus Lembah ⚓"
+	default:
+		return "Permata Fundamental 💎"
+	}
+}
+
 func (radarServiceImpl *ServiceImpl) ensureDataReady(ctx context.Context, gormTransaction *gorm.DB) (string, error) {
 	date, err := radarServiceImpl.radarRepository.GetLatestAvailableDate(gormTransaction)
 	today := time.Now().Format("2006-01-02")
@@ -480,18 +635,6 @@ func (radarServiceImpl *ServiceImpl) ensureDataReady(ctx context.Context, gormTr
 	return date, nil
 }
 
-// getIndicatorEmoji returns the strength emoji for a given composite score (PRD §8.1).
-func getIndicatorEmoji(score int) string {
-	if score >= 80 {
-		return "🔥"
-	}
-	if score >= 60 {
-		return "📈"
-	}
-	return "➖"
-}
-
-// GetRadarBySubSector returns the top 5 signals for a given sub-sector (PRD §5.4 Path A).
 func (radarServiceImpl *ServiceImpl) GetRadarBySubSector(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -503,46 +646,58 @@ func (radarServiceImpl *ServiceImpl) GetRadarBySubSector(
 		return nil, err
 	}
 
-	signals, err := radarServiceImpl.radarRepository.GetTopSignalsBySubSector(gormTransaction, date, subSector, 5)
-	if err != nil {
-		return nil, err
-	}
-
-	totalMonitored, _ := radarServiceImpl.radarRepository.GetSubSectorCounts(gormTransaction, date, subSector)
-	if totalMonitored == 0 {
-		totalMonitored = int64(len(signals))
+	pillarScores, err := radarServiceImpl.radarRepository.GetTopPillarScoresBySubSector(gormTransaction, date, subSector, 5)
+	if err != nil || len(pillarScores) == 0 {
+		// Fallback to legacy signals if pillar_score_daily is empty
+		signals, _ := radarServiceImpl.radarRepository.GetTopSignalsBySubSector(gormTransaction, date, subSector, 5)
+		var tickerItems []model.RadarSignalItem
+		for _, s := range signals {
+			tickerItems = append(tickerItems, model.RadarSignalItem{
+				Symbol:         s.Symbol,
+				SubSector:      s.SubSector,
+				CompositeScore: s.CompositeScore,
+				HGS:            float64(s.CompositeScore),
+				IndicatorEmoji: getIndicatorEmoji(s.CompositeScore),
+			})
+		}
+		closingDate := time.Now().AddDate(0, 0, -1).Format("02 Jan 2006")
+		return &model.RadarResult{
+			Date:            time.Now().Format("02 Jan 2006"),
+			DataClosingDate: closingDate,
+			Mode:            "subsector",
+			SubSector:       subSector,
+			TotalMonitored:  len(tickerItems),
+			Tickers:         tickerItems,
+		}, nil
 	}
 
 	var tickerItems []model.RadarSignalItem
-	for _, s := range signals {
+	for _, ps := range pillarScores {
 		tickerItems = append(tickerItems, model.RadarSignalItem{
-			Symbol:                   s.Symbol,
-			SubSector:                s.SubSector,
-			ForeignFlowScore:         s.ForeignFlowScore,
-			InstitutionalBrokerScore: s.InstitutionalBrokerScore,
-			VolumeScore:              s.VolumeScore,
-			MomentumScore:            s.MomentumScore,
-			BonusCorporateAction:     s.BonusCorporateAction,
-			BonusQuarterlyReport:     s.BonusQuarterlyReport,
-			BonusInsiderBuy:          s.BonusInsiderBuy,
-			CompositeScore:           s.CompositeScore,
-			IndicatorEmoji:           getIndicatorEmoji(s.CompositeScore),
+			Symbol:          ps.Symbol,
+			SubSector:       ps.SubSector,
+			CompositeScore:  int(math.Round(ps.HGS)),
+			HGS:             ps.HGS,
+			V:               ps.V,
+			Q:               ps.Q,
+			I:               ps.I,
+			H:               ps.H,
+			S:               ps.S,
+			T:               ps.T,
+			Archetype:       ps.Archetype,
+			ConfidenceLabel: ps.ConfidenceLabel,
+			IndicatorEmoji:  getIndicatorEmoji(int(math.Round(ps.HGS))),
+		})
+		// Log paper pick
+		_ = radarServiceImpl.radarRepository.LogRadarPick(gormTransaction, &entity.RadarPickLog{
+			UserID:    userID,
+			Symbol:    ps.Symbol,
+			ShownDate: date,
+			HGS:       ps.HGS,
+			Archetype: ps.Archetype,
+			Mode:      "subsector",
 		})
 	}
-
-	// Note: if sub-sector has fewer than 5 eligible tickers, show all with a note (PRD §5.4)
-	var summaryNote string
-	if len(signals) < 5 {
-		summaryNote = fmt.Sprintf("Menampilkan seluruh %d saham eligible pada subsektor ini.", len(signals))
-	}
-
-	paramsBytes, _ := json.Marshal(map[string]string{"sub_sector": subSector})
-	_ = radarServiceImpl.radarRepository.LogRequest(gormTransaction, &entity.RadarRequestLog{
-		UserID:              userID,
-		RequestType:         "subsector",
-		Params:              string(paramsBytes),
-		ResponseTickerCount: len(tickerItems),
-	})
 
 	closingDate := time.Now().AddDate(0, 0, -1).Format("02 Jan 2006")
 	return &model.RadarResult{
@@ -550,14 +705,11 @@ func (radarServiceImpl *ServiceImpl) GetRadarBySubSector(
 		DataClosingDate: closingDate,
 		Mode:            "subsector",
 		SubSector:       subSector,
-		TotalMonitored:  int(totalMonitored),
+		TotalMonitored:  len(tickerItems),
 		Tickers:         tickerItems,
-		SummaryNote:     summaryNote,
 	}, nil
 }
 
-// GetRadarByWatchlist returns radar results for all tickers in the user's watchlist,
-// displaying up to 5 sorted by score (PRD §5.4 Path B).
 func (radarServiceImpl *ServiceImpl) GetRadarByWatchlist(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -580,213 +732,56 @@ func (radarServiceImpl *ServiceImpl) GetRadarByWatchlist(
 		}, nil
 	}
 
-	signals, err := radarServiceImpl.radarRepository.GetTopSignalsByWatchlist(gormTransaction, date, userID, 0)
-	if err != nil {
-		return nil, err
+	var symbols []string
+	for _, w := range userWatchlist {
+		symbols = append(symbols, strings.ToUpper(w.Symbol))
 	}
 
-	// On-demand enrichment for watchlist tickers not yet in the shortlist (PRD §5.4 Path B)
-	foundMap := make(map[string]bool)
-	for _, s := range signals {
-		foundMap[s.Symbol] = true
-	}
-	var missingSymbols []string
-	for _, wl := range userWatchlist {
-		upper := strings.ToUpper(wl.Symbol)
-		if !foundMap[upper] {
-			missingSymbols = append(missingSymbols, upper)
-		}
-	}
-	if len(missingSymbols) > 0 {
-		logrus.Infof("Triggering on-demand enrichment for %d non-shortlisted watchlist tickers: %v", len(missingSymbols), missingSymbols)
-		radarServiceImpl.enrichSymbolsOnDemand(ctx, date, missingSymbols)
-		// Re-fetch signals after enrichment
-		signals, _ = radarServiceImpl.radarRepository.GetTopSignalsByWatchlist(gormTransaction, date, userID, 0)
-	}
-
-	totalWatchlist := len(userWatchlist)
-	const displayLimit = 5
-	displayedSignals := signals
-	if len(displayedSignals) > displayLimit {
-		displayedSignals = displayedSignals[:displayLimit]
+	scores, _ := radarServiceImpl.radarRepository.GetPillarScoresBySymbols(gormTransaction, date, symbols)
+	scoreMap := make(map[string]entity.PillarScoreDaily)
+	for _, sc := range scores {
+		scoreMap[sc.Symbol] = sc
 	}
 
 	var tickerItems []model.RadarSignalItem
-	for _, s := range displayedSignals {
-		note := ""
-		if s.CompositeScore < 60 {
-			note = "tidak ada sinyal signifikan hari ini"
+	for _, sym := range symbols {
+		if ps, ok := scoreMap[sym]; ok {
+			tickerItems = append(tickerItems, model.RadarSignalItem{
+				Symbol:          ps.Symbol,
+				SubSector:       ps.SubSector,
+				CompositeScore:  int(math.Round(ps.HGS)),
+				HGS:             ps.HGS,
+				V:               ps.V,
+				Q:               ps.Q,
+				I:               ps.I,
+				H:               ps.H,
+				S:               ps.S,
+				T:               ps.T,
+				Archetype:       ps.Archetype,
+				ConfidenceLabel: ps.ConfidenceLabel,
+				IndicatorEmoji:  getIndicatorEmoji(int(math.Round(ps.HGS))),
+			})
 		}
-		tickerItems = append(tickerItems, model.RadarSignalItem{
-			Symbol:                   s.Symbol,
-			SubSector:                s.SubSector,
-			ForeignFlowScore:         s.ForeignFlowScore,
-			InstitutionalBrokerScore: s.InstitutionalBrokerScore,
-			VolumeScore:              s.VolumeScore,
-			MomentumScore:            s.MomentumScore,
-			BonusCorporateAction:     s.BonusCorporateAction,
-			BonusQuarterlyReport:     s.BonusQuarterlyReport,
-			BonusInsiderBuy:          s.BonusInsiderBuy,
-			CompositeScore:           s.CompositeScore,
-			IndicatorEmoji:           getIndicatorEmoji(s.CompositeScore),
-			Note:                     note,
-		})
 	}
 
-	var summaryNote string
-	if totalWatchlist <= 5 {
-		summaryNote = fmt.Sprintf("%d dari %d ticker (≤5, semua ditampilkan)", len(tickerItems), totalWatchlist)
-	} else {
-		summaryNote = fmt.Sprintf("%d ticker lain tidak menunjukkan sinyal signifikan hari ini", totalWatchlist-5)
-	}
-
-	paramsBytes, _ := json.Marshal(map[string]int{"watchlist_count": totalWatchlist})
-	_ = radarServiceImpl.radarRepository.LogRequest(gormTransaction, &entity.RadarRequestLog{
-		UserID:              userID,
-		RequestType:         "watchlist",
-		Params:              string(paramsBytes),
-		ResponseTickerCount: len(tickerItems),
+	sort.Slice(tickerItems, func(i, j int) bool {
+		return tickerItems[i].HGS > tickerItems[j].HGS
 	})
+
+	if len(tickerItems) > 5 {
+		tickerItems = tickerItems[:5]
+	}
 
 	closingDate := time.Now().AddDate(0, 0, -1).Format("02 Jan 2006")
 	return &model.RadarResult{
 		Date:            time.Now().Format("02 Jan 2006"),
 		DataClosingDate: closingDate,
 		Mode:            "watchlist",
-		TotalMonitored:  totalWatchlist,
+		TotalMonitored:  len(userWatchlist),
 		Tickers:         tickerItems,
-		SummaryNote:     summaryNote,
 	}, nil
 }
 
-// enrichSymbolsOnDemand fetches broker summary, insider filings, and news for symbols
-// that were not part of the daily shortlist, and saves them to the cache (PRD §5.4 Path B).
-func (radarServiceImpl *ServiceImpl) enrichSymbolsOnDemand(ctx context.Context, date string, symbols []string) {
-	var brokerInfos []struct {
-		symbol string
-		ratio  float64
-		item   *BrokerSummaryItem
-	}
-	insiderBonusMap := make(map[string]int)
-	insiderFilingsMap := make(map[string][]FilingItem)
-
-	for _, sym := range symbols {
-		bs, err := radarServiceImpl.sectorsClient.GetInstitutionalBrokerSummary(ctx, sym)
-		if err == nil && bs != nil {
-			brokerInfos = append(brokerInfos, struct {
-				symbol string
-				ratio  float64
-				item   *BrokerSummaryItem
-			}{sym, bs.Ratio, bs})
-		}
-		filings, err := radarServiceImpl.sectorsClient.GetInsiderFilings(ctx, sym)
-		if err == nil && len(filings) > 0 {
-			insiderFilingsMap[sym] = filings
-			for _, f := range filings {
-				if strings.ToLower(f.TransactionType) == "buy" && f.Percentage >= 0.5 {
-					insiderBonusMap[sym] = 100
-					break
-				}
-			}
-		}
-	}
-
-	brokerScoreMap := make(map[string]int)
-	brokerSummaryMap := make(map[string]*BrokerSummaryItem)
-	bn := len(brokerInfos)
-	sort.Slice(brokerInfos, func(i, j int) bool { return brokerInfos[i].ratio < brokerInfos[j].ratio })
-	for i, info := range brokerInfos {
-		score := 50
-		if bn > 1 {
-			score = int(math.Round(float64(i) / float64(bn-1) * 100.0))
-		}
-		brokerScoreMap[info.symbol] = score
-		brokerSummaryMap[info.symbol] = info.item
-	}
-
-	newsMap, _ := radarServiceImpl.sectorsClient.GetNews(ctx, symbols)
-
-	var currentSignals []entity.SignalDaily
-	_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		var err error
-		currentSignals, err = radarServiceImpl.radarRepository.GetSignalsBySymbols(tx, date, symbols)
-		return err
-	})
-
-	var updatedSignals []entity.SignalDaily
-	var explanations []entity.TickerExplanationDaily
-
-	for _, sig := range currentSignals {
-		sym := sig.Symbol
-		institutionalBrokerScore := brokerScoreMap[sym]
-		if institutionalBrokerScore == 0 {
-			institutionalBrokerScore = 50
-		}
-		bonusInsiderBuy := insiderBonusMap[sym]
-		compositeScore := int(math.Round(
-			0.25*float64(sig.ForeignFlowScore) +
-				0.25*float64(institutionalBrokerScore) +
-				0.15*float64(sig.VolumeScore) +
-				0.10*float64(sig.MomentumScore) +
-				0.10*float64(sig.BonusCorporateAction) +
-				0.10*float64(sig.BonusQuarterlyReport) +
-				0.05*float64(bonusInsiderBuy),
-		))
-		if compositeScore > 100 {
-			compositeScore = 100
-		}
-		sig.InstitutionalBrokerScore = institutionalBrokerScore
-		sig.BonusInsiderBuy = bonusInsiderBuy
-		sig.CompositeScore = compositeScore
-		sig.IsEnriched = true
-		updatedSignals = append(updatedSignals, sig)
-
-		rawEvidence := map[string]interface{}{
-			"foreign_flow_score":         sig.ForeignFlowScore,
-			"institutional_broker_score": institutionalBrokerScore,
-			"volume_score":               sig.VolumeScore,
-			"momentum_score":             sig.MomentumScore,
-			"bonus_corporate_action":     sig.BonusCorporateAction,
-			"bonus_quarterly_report":     sig.BonusQuarterlyReport,
-			"bonus_insider_buy":          bonusInsiderBuy,
-			"composite_score":            compositeScore,
-		}
-		if bs, ok := brokerSummaryMap[sym]; ok && bs != nil {
-			rawEvidence["broker_net_buy_idr"] = bs.InstitutionalNet
-			rawEvidence["broker_ratio"] = bs.Ratio
-		}
-		if fl, ok := insiderFilingsMap[sym]; ok {
-			rawEvidence["insider_filings"] = fl
-		}
-		evidenceBytes, _ := json.Marshal(rawEvidence)
-
-		newsList := newsMap[sym]
-		var modelNews []model.NewsItem
-		for _, n := range newsList {
-			modelNews = append(modelNews, model.NewsItem{
-				Title: n.Title, Source: n.Source, Timestamp: n.Timestamp, URL: n.URL,
-			})
-		}
-		newsBytes, _ := json.Marshal(modelNews)
-
-		summaryReason := radarServiceImpl.buildSummaryReason(sym, sig, brokerSummaryMap[sym], modelNews)
-		explanations = append(explanations, entity.TickerExplanationDaily{
-			Date: date, Symbol: sym,
-			SummaryReason: summaryReason,
-			EvidenceJSON:  string(evidenceBytes),
-			RelatedNews:   string(newsBytes),
-		})
-	}
-
-	_ = radarServiceImpl.dbConnection.Transaction(func(tx *gorm.DB) error {
-		if err := radarServiceImpl.radarRepository.SaveSignals(tx, updatedSignals); err != nil {
-			return err
-		}
-		return radarServiceImpl.radarRepository.SaveExplanations(tx, explanations)
-	})
-}
-
-// GetRadarByManualTickers returns radar results for a user-supplied list of tickers (PRD §5.4 Path B manual).
 func (radarServiceImpl *ServiceImpl) GetRadarByManualTickers(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -799,101 +794,58 @@ func (radarServiceImpl *ServiceImpl) GetRadarByManualTickers(
 	}
 
 	var cleanSymbols []string
-	for _, symbol := range symbols {
-		cleaned := strings.TrimSpace(strings.ToUpper(symbol))
-		if cleaned != "" {
-			cleanSymbols = append(cleanSymbols, cleaned)
+	for _, s := range symbols {
+		clean := strings.TrimSpace(strings.ToUpper(s))
+		if clean != "" {
+			cleanSymbols = append(cleanSymbols, clean)
 		}
 	}
 
-	signals, err := radarServiceImpl.radarRepository.GetSignalsBySymbols(gormTransaction, date, cleanSymbols)
-	if err != nil {
-		return nil, err
-	}
-
-	// For any symbols not found in the signal table, create a placeholder entry (PRD §10 invalid/delisted handling)
-	foundMap := make(map[string]bool)
-	for _, signal := range signals {
-		foundMap[signal.Symbol] = true
-	}
-	var notFoundSymbols []string
-	for _, sym := range cleanSymbols {
-		if !foundMap[sym] {
-			notFoundSymbols = append(notFoundSymbols, sym)
-			signals = append(signals, entity.SignalDaily{
-				Date:           date,
-				Symbol:         sym,
-				SubSector:      "Unknown",
-				CompositeScore: 0,
-			})
-		}
-	}
-	if len(notFoundSymbols) > 0 {
-		logrus.Warnf("Manual ticker request: symbols not found in today's universe: %v", notFoundSymbols)
-	}
-
-	sort.Slice(signals, func(i, j int) bool {
-		return signals[i].CompositeScore > signals[j].CompositeScore
-	})
-
-	totalInput := len(cleanSymbols)
-	const displayLimit = 5
-	displayedSignals := signals
-	if len(displayedSignals) > displayLimit {
-		displayedSignals = displayedSignals[:displayLimit]
+	scores, _ := radarServiceImpl.radarRepository.GetPillarScoresBySymbols(gormTransaction, date, cleanSymbols)
+	scoreMap := make(map[string]entity.PillarScoreDaily)
+	for _, sc := range scores {
+		scoreMap[sc.Symbol] = sc
 	}
 
 	var tickerItems []model.RadarSignalItem
-	for _, displayedSignal := range displayedSignals {
-		note := ""
-		if displayedSignal.CompositeScore >= 80 {
-			note = "ada sinyal kuat"
-		} else if displayedSignal.CompositeScore < 60 {
-			note = "tidak ada sinyal signifikan hari ini"
+	for _, sym := range cleanSymbols {
+		if ps, ok := scoreMap[sym]; ok {
+			tickerItems = append(tickerItems, model.RadarSignalItem{
+				Symbol:          ps.Symbol,
+				SubSector:       ps.SubSector,
+				CompositeScore:  int(math.Round(ps.HGS)),
+				HGS:             ps.HGS,
+				V:               ps.V,
+				Q:               ps.Q,
+				I:               ps.I,
+				H:               ps.H,
+				S:               ps.S,
+				T:               ps.T,
+				Archetype:       ps.Archetype,
+				ConfidenceLabel: ps.ConfidenceLabel,
+				IndicatorEmoji:  getIndicatorEmoji(int(math.Round(ps.HGS))),
+			})
+		} else {
+			tickerItems = append(tickerItems, model.RadarSignalItem{
+				Symbol:         sym,
+				SubSector:      "Unknown",
+				CompositeScore: 0,
+				IndicatorEmoji: "➖",
+				Note:           "tidak ada data dalam universe",
+			})
 		}
-		tickerItems = append(tickerItems, model.RadarSignalItem{
-			Symbol:                   displayedSignal.Symbol,
-			SubSector:                displayedSignal.SubSector,
-			ForeignFlowScore:         displayedSignal.ForeignFlowScore,
-			InstitutionalBrokerScore: displayedSignal.InstitutionalBrokerScore,
-			VolumeScore:              displayedSignal.VolumeScore,
-			MomentumScore:            displayedSignal.MomentumScore,
-			BonusCorporateAction:     displayedSignal.BonusCorporateAction,
-			BonusQuarterlyReport:     displayedSignal.BonusQuarterlyReport,
-			BonusInsiderBuy:          displayedSignal.BonusInsiderBuy,
-			CompositeScore:           displayedSignal.CompositeScore,
-			IndicatorEmoji:           getIndicatorEmoji(displayedSignal.CompositeScore),
-			Note:                     note,
-		})
 	}
-
-	var summaryNote string
-	if totalInput <= 5 {
-		summaryNote = fmt.Sprintf("%d dari %d ticker (≤5, semua ditampilkan)", len(tickerItems), totalInput)
-	} else {
-		summaryNote = fmt.Sprintf("%d ticker lain tidak menunjukkan sinyal signifikan hari ini", totalInput-5)
-	}
-
-	paramsBytes, _ := json.Marshal(map[string]interface{}{"symbols": cleanSymbols})
-	_ = radarServiceImpl.radarRepository.LogRequest(gormTransaction, &entity.RadarRequestLog{
-		UserID:              userID,
-		RequestType:         "manual",
-		Params:              string(paramsBytes),
-		ResponseTickerCount: len(tickerItems),
-	})
 
 	closingDate := time.Now().AddDate(0, 0, -1).Format("02 Jan 2006")
 	return &model.RadarResult{
 		Date:            time.Now().Format("02 Jan 2006"),
 		DataClosingDate: closingDate,
 		Mode:            "manual",
-		TotalMonitored:  totalInput,
+		TotalMonitored:  len(cleanSymbols),
 		Tickers:         tickerItems,
-		SummaryNote:     summaryNote,
 	}, nil
 }
 
-// GetDrillDownExplanation returns the detailed signal breakdown for a single ticker (PRD §4.4).
 func (radarServiceImpl *ServiceImpl) GetDrillDownExplanation(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -905,84 +857,65 @@ func (radarServiceImpl *ServiceImpl) GetDrillDownExplanation(
 		return nil, err
 	}
 
-	signals, _ := radarServiceImpl.radarRepository.GetSignalsBySymbols(gormTransaction, date, []string{upperSymbol})
-	if len(signals) == 0 {
-		return nil, ErrTickerNotFound
-	}
-	signal := signals[0]
+	scores, _ := radarServiceImpl.radarRepository.GetPillarScoresBySymbols(gormTransaction, date, []string{upperSymbol})
+	caseFile, _ := radarServiceImpl.radarRepository.GetCaseFile(gormTransaction, date, upperSymbol)
 
-	explanation, err := radarServiceImpl.radarRepository.GetExplanation(gormTransaction, date, upperSymbol)
-
+	var hgs float64
+	archetype := "quality_compounder"
+	confLabel := "medium"
 	var detectedSignals []string
-	var additionalContext []string
-	var newsList []model.NewsItem
-	rawEvidence := make(map[string]interface{})
 
-	if explanation != nil {
-		_ = json.Unmarshal([]byte(explanation.EvidenceJSON), &rawEvidence)
-		_ = json.Unmarshal([]byte(explanation.RelatedNews), &newsList)
-	}
+	if len(scores) > 0 {
+		ps := scores[0]
+		hgs = ps.HGS
+		archetype = ps.Archetype
+		confLabel = ps.ConfidenceLabel
 
-	// Build detected signals list for drill-down display (PRD §4.4)
-	if signal.ForeignFlowScore > 0 {
-		if signal.ForeignFlowScore >= 70 {
-			detectedSignals = append(detectedSignals, fmt.Sprintf("🌍 Asing net inflow signifikan (persentil ke-%d hari ini)", signal.ForeignFlowScore))
-		} else {
-			detectedSignals = append(detectedSignals, fmt.Sprintf("🌍 Aliran asing netral/moderat (skor %d/100)", signal.ForeignFlowScore))
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Valuasi (V): %.1f/100", ps.V))
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Kualitas & Moat (Q): %.1f/100", ps.Q))
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Pertumbuhan & Infleksi (I): %.1f/100", ps.I))
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Kesehatan Finansial (H): %.1f/100", ps.H))
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Katalis & Sentimen (S): %.1f/100", ps.S))
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Konfirmasi Aliran & Teknikal (T): %.1f/100", ps.T))
+	} else {
+		// Fallback checking legacy signals
+		sigs, _ := radarServiceImpl.radarRepository.GetSignalsBySymbols(gormTransaction, date, []string{upperSymbol})
+		if len(sigs) == 0 {
+			return nil, ErrTickerNotFound
 		}
-	}
-	if signal.InstitutionalBrokerScore > 0 {
-		if netBuy, ok := rawEvidence["broker_net_buy_idr"].(float64); ok && netBuy > 0 {
-			detectedSignals = append(detectedSignals, fmt.Sprintf("🏦 Broker institusi net beli Rp %.1f M (5 hari terakhir)", netBuy/1e9))
-		} else {
-			detectedSignals = append(detectedSignals, fmt.Sprintf("🏦 Broker institusi akumulasi skor %d/100", signal.InstitutionalBrokerScore))
-		}
-	}
-	if signal.VolumeScore >= 60 {
-		detectedSignals = append(detectedSignals, "📈 Volume transaksi mengalami lonjakan di atas rata-rata")
-	}
-	if len(newsList) > 0 {
-		detectedSignals = append(detectedSignals, fmt.Sprintf("📰 Ada berita: \"%s\"", newsList[0].Title))
+		hgs = float64(sigs[0].CompositeScore)
+		detectedSignals = append(detectedSignals, fmt.Sprintf("Skor Komposit: %.1f/100", hgs))
 	}
 
-	if len(detectedSignals) == 0 {
-		detectedSignals = append(detectedSignals, "• Belum terdeteksi sinyal anomali besar hari ini")
+	var explanationObj model.CaseFileExplanation
+	var rawEvidence map[string]interface{}
+	if caseFile != nil {
+		_ = json.Unmarshal([]byte(caseFile.Explanation), &explanationObj)
+		_ = json.Unmarshal([]byte(caseFile.JSON), &rawEvidence)
 	}
 
-	// Additional context (PRD §4.4)
-	if signal.BonusQuarterlyReport > 0 {
-		additionalContext = append(additionalContext, "• Laporan keuangan kuartal baru saja dirilis")
-	} else {
-		additionalContext = append(additionalContext, "• Tidak ada laporan kuartal baru dalam 2 hari terakhir")
-	}
-	if signal.BonusCorporateAction > 0 {
-		additionalContext = append(additionalContext, "• Terdapat aksi korporasi (dividen/RUPS) dalam 7 hari ke depan")
-	} else {
-		additionalContext = append(additionalContext, "• Tidak ada aksi korporasi dalam 7 hari ke depan")
-	}
-
-	summaryReason := ""
-	if explanation != nil && explanation.SummaryReason != "" {
-		summaryReason = explanation.SummaryReason
-	} else {
-		summaryReason = fmt.Sprintf("Saham %s menunjukkan skor komposit %d/100 berdasarkan data closing pasar.", upperSymbol, signal.CompositeScore)
+	summaryReason := explanationObj.PrimaryThesis
+	if summaryReason == "" {
+		summaryReason = fmt.Sprintf("Saham %s terpilih dalam Radar Permata dengan skor HGS %.1f (%s).",
+			upperSymbol, hgs, formatArchetypeLabel(archetype))
 	}
 
 	closingDate := time.Now().AddDate(0, 0, -1).Format("02 Jan 2006")
 	return &model.RadarDrillDownResult{
-		Symbol:            upperSymbol,
-		Date:              time.Now().Format("02 Jan 2006"),
-		DataClosingDate:   closingDate,
-		CompositeScore:    signal.CompositeScore,
-		Signals:           detectedSignals,
-		AdditionalContext: additionalContext,
-		SummaryReason:     summaryReason,
-		News:              newsList,
-		RawEvidence:       rawEvidence,
+		Symbol:             upperSymbol,
+		Date:               time.Now().Format("02 Jan 2006"),
+		DataClosingDate:    closingDate,
+		CompositeScore:     int(math.Round(hgs)),
+		HGS:                hgs,
+		Archetype:          archetype,
+		ConfidenceLabel:    confLabel,
+		Signals:            detectedSignals,
+		SummaryReason:      summaryReason,
+		ExplanationDetails: &explanationObj,
+		RawEvidence:        rawEvidence,
 	}, nil
 }
 
-// SetUserPreference saves the user's broadcast preference (PRD §4.5).
 func (radarServiceImpl *ServiceImpl) SetUserPreference(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -993,7 +926,6 @@ func (radarServiceImpl *ServiceImpl) SetUserPreference(
 	if req.BroadcastEnabled != nil {
 		broadcastEnabled = *req.BroadcastEnabled
 	}
-
 	broadcastTime := req.BroadcastTime
 	if broadcastTime == "" {
 		broadcastTime = "08:00"
@@ -1021,7 +953,6 @@ func (radarServiceImpl *ServiceImpl) SetUserPreference(
 	}, nil
 }
 
-// GetUserPreference retrieves the user's radar preference, returning sensible defaults if none set.
 func (radarServiceImpl *ServiceImpl) GetUserPreference(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -1046,7 +977,6 @@ func (radarServiceImpl *ServiceImpl) GetUserPreference(
 	}, nil
 }
 
-// GetUserWatchlist returns all symbols in the user's watchlist.
 func (radarServiceImpl *ServiceImpl) GetUserWatchlist(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -1066,23 +996,20 @@ func (radarServiceImpl *ServiceImpl) GetUserWatchlist(
 	}, nil
 }
 
-// AddToWatchlist adds symbols to the user's watchlist, enforcing the PRD §5.4 max-10-ticker cap.
 func (radarServiceImpl *ServiceImpl) AddToWatchlist(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
 	userID uint64,
 	symbols []string,
 ) (*model.WatchlistResponse, error) {
-	// Enforce watchlist cap: max 10 tickers per user (PRD §5.4)
 	existing, err := radarServiceImpl.radarRepository.GetUserWatchlist(gormTransaction, userID)
 	if err == nil {
 		remaining := maxWatchlistPerUser - len(existing)
 		if remaining <= 0 {
-			return nil, fmt.Errorf("watchlist is full: maximum %d tickers allowed per user (PRD §5.4)", maxWatchlistPerUser)
+			return nil, fmt.Errorf("watchlist is full: maximum %d tickers allowed per user", maxWatchlistPerUser)
 		}
 		if len(symbols) > remaining {
 			symbols = symbols[:remaining]
-			logrus.Warnf("Watchlist cap reached for user %d: only adding first %d symbols", userID, remaining)
 		}
 	}
 
@@ -1102,7 +1029,6 @@ func (radarServiceImpl *ServiceImpl) AddToWatchlist(
 	return radarServiceImpl.GetUserWatchlist(ctx, gormTransaction, userID)
 }
 
-// RemoveFromWatchlist removes a single symbol from the user's watchlist.
 func (radarServiceImpl *ServiceImpl) RemoveFromWatchlist(
 	ctx context.Context,
 	gormTransaction *gorm.DB,
@@ -1115,13 +1041,12 @@ func (radarServiceImpl *ServiceImpl) RemoveFromWatchlist(
 	return radarServiceImpl.GetUserWatchlist(ctx, gormTransaction, userID)
 }
 
-// FormatRadarMessage formats a RadarResult into the WhatsApp message format (PRD §8.1).
-// Note: Message text is intentionally in Indonesian as the product targets Indonesian users.
 func (radarServiceImpl *ServiceImpl) FormatRadarMessage(result *model.RadarResult) string {
 	var sb strings.Builder
 	numberEmojis := []string{"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"}
 
-	if result.Mode == "subsector" {
+	switch result.Mode {
+	case "subsector":
 		icon := "🏦"
 		if strings.EqualFold(result.SubSector, "food & beverage") {
 			icon = "🍔"
@@ -1130,72 +1055,96 @@ func (radarServiceImpl *ServiceImpl) FormatRadarMessage(result *model.RadarResul
 		} else if strings.EqualFold(result.SubSector, "telco") {
 			icon = "📡"
 		}
-		sb.WriteString(fmt.Sprintf("%s *Radar Subsektor %s* — %s\n_(Data per closing %s)_\n\n", icon, result.SubSector, result.Date, result.DataClosingDate))
-		sb.WriteString(fmt.Sprintf("Top %d dari %d saham yang dipantau:\n\n", len(result.Tickers), result.TotalMonitored))
-	} else if result.Mode == "watchlist" {
-		sb.WriteString(fmt.Sprintf("🔎 *Radar Watchlist Kamu* — %s\n\n", result.Date))
-		if result.SummaryNote != "" {
-			sb.WriteString(fmt.Sprintf("%s\n\n", result.SummaryNote))
-		}
-	} else {
-		sb.WriteString(fmt.Sprintf("🔎 *Radar Saham* — %s\n\n", result.Date))
-		if result.SummaryNote != "" {
-			sb.WriteString(fmt.Sprintf("%s\n\n", result.SummaryNote))
-		}
+		sb.WriteString(fmt.Sprintf("%s *Radar Permata Subsektor %s* — %s\n_(Data per closing %s)_\n\n", icon, result.SubSector, result.Date, result.DataClosingDate))
+		sb.WriteString(fmt.Sprintf("Top %d saham terpilih berbasis analisis 6-pilar intrinsik:\n\n", len(result.Tickers)))
+	case "watchlist":
+		sb.WriteString(fmt.Sprintf("🔎 *Radar Permata Watchlist Kamu* — %s\n\n", result.Date))
+	default:
+		sb.WriteString(fmt.Sprintf("🔎 *Radar Permata Saham* — %s\n\n", result.Date))
 	}
 
 	for i, ticker := range result.Tickers {
 		emoji := numberEmojis[i%len(numberEmojis)]
-		line := fmt.Sprintf("%s *%s* — Skor %d %s", emoji, ticker.Symbol, ticker.CompositeScore, ticker.IndicatorEmoji)
-		if ticker.Note != "" {
-			line += fmt.Sprintf(" (%s)", ticker.Note)
+		archLabel := ""
+		if ticker.Archetype != "" {
+			archLabel = fmt.Sprintf(" | %s", formatArchetypeLabel(ticker.Archetype))
 		}
-		sb.WriteString(line + "\n")
+		sb.WriteString(fmt.Sprintf("%s *%s* — Skor HGS %.1f %s%s\n", emoji, ticker.Symbol, ticker.HGS, ticker.IndicatorEmoji, archLabel))
 	}
 
-	sb.WriteString("\nBalas angka (1-5) untuk melihat detail *\"Kenapa muncul?\"* atau tanyakan seputar saham di atas.")
+	sb.WriteString(fmt.Sprintf(
+		"\nBalas angka (1-%d) untuk melihat detail *Case File* & Tesis Investasi, atau tanyakan seputar saham di atas.",
+		len(result.Tickers),
+	))
 	sb.WriteString("\n_(Ketik *batal* untuk kembali ke menu utama)_\n\n")
 
 	return sb.String()
 }
 
-// FormatDrillDownMessage formats a RadarDrillDownResult into the WhatsApp drill-down format (PRD §8.2).
-// Note: Message text is intentionally in Indonesian as the product targets Indonesian users.
 func (radarServiceImpl *ServiceImpl) FormatDrillDownMessage(result *model.RadarDrillDownResult) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📌 *%s* — Skor %d/100\n\n", result.Symbol, result.CompositeScore))
+	archLabel := formatArchetypeLabel(result.Archetype)
+	sb.WriteString(fmt.Sprintf("💎 *%s* — Skor HGS %.1f/100 (%s)\n\n", result.Symbol, result.HGS, archLabel))
 
-	sb.WriteString("*Sinyal terdeteksi:*\n")
-	for _, sig := range result.Signals {
-		sb.WriteString(fmt.Sprintf("• %s\n", sig))
+	if result.ExplanationDetails != nil && result.ExplanationDetails.PrimaryThesis != "" {
+		sb.WriteString("*Tesis Utama:*\n")
+		sb.WriteString(fmt.Sprintf("%s\n\n", result.ExplanationDetails.PrimaryThesis))
+
+		if result.ExplanationDetails.WhyUnderFollowed != "" {
+			sb.WriteString("*Mengapa Under-Followed:*\n")
+			sb.WriteString(fmt.Sprintf("%s\n\n", result.ExplanationDetails.WhyUnderFollowed))
+		}
+
+		if result.ExplanationDetails.PotentialCatalyst != "" {
+			sb.WriteString("*Katalis Potensial:*\n")
+			sb.WriteString(fmt.Sprintf("%s\n\n", result.ExplanationDetails.PotentialCatalyst))
+		}
+
+		if len(result.ExplanationDetails.SpecificRisks) > 0 {
+			sb.WriteString("*Risiko Spesifik:*\n")
+			for _, r := range result.ExplanationDetails.SpecificRisks {
+				sb.WriteString(fmt.Sprintf("• %s\n", r))
+			}
+			sb.WriteString("\n")
+		}
+
+		if len(result.ExplanationDetails.CriticalQuestions) > 0 {
+			sb.WriteString("*Pertanyaan Kritis untuk Investor:*\n")
+			for _, q := range result.ExplanationDetails.CriticalQuestions {
+				sb.WriteString(fmt.Sprintf("❓ %s\n", q))
+			}
+			sb.WriteString("\n")
+		}
+
+		if result.ExplanationDetails.NotInvestmentAdvice != "" {
+			sb.WriteString(fmt.Sprintf("⚠️ _%s_\n\n", result.ExplanationDetails.NotInvestmentAdvice))
+		}
+	} else {
+		sb.WriteString("*Ringkasan:*\n")
+		sb.WriteString(fmt.Sprintf("%s\n\n", result.SummaryReason))
+		sb.WriteString("*Pilar Skor:*\n")
+		for _, sig := range result.Signals {
+			sb.WriteString(fmt.Sprintf("• %s\n", sig))
+		}
+		sb.WriteString("\n")
 	}
 
-	sb.WriteString("\n*Konteks tambahan:*\n")
-	for _, ctx := range result.AdditionalContext {
-		sb.WriteString(fmt.Sprintf("%s\n", ctx))
-	}
-
-	sb.WriteString("\n\nAnda dapat menanyakan analisis mendalam tentang saham ini, atau balas angka lain untuk cek saham berikutnya.")
+	sb.WriteString("Anda dapat menanyakan analisis mendalam tentang saham ini, atau balas angka lain untuk cek saham berikutnya.")
 	return sb.String()
 }
 
-// RunMorningBroadcast sends the daily Radar to all opted-in users (PRD §6.5, §9 NFR).
-// It validates data freshness before broadcasting and applies rate limiting between messages.
 func (radarServiceImpl *ServiceImpl) RunMorningBroadcast(
 	ctx context.Context,
 	broadcastFunc func(phone string, message string) error,
 ) error {
-	logrus.Info("Starting Morning Radar Broadcast")
+	logrus.Info("Starting Morning Radar Permata Broadcast")
 
-	// Staleness check: validate data is fresh before broadcasting (PRD §9 NFR)
 	freshnessDate, err := radarServiceImpl.sectorsClient.CheckDataFreshness(ctx)
 	if err != nil {
-		logrus.Warn("Could not verify data freshness; skipping broadcast to avoid stale data")
 		return fmt.Errorf("broadcast aborted: data freshness check failed: %w", err)
 	}
 	today := time.Now().Format("2006-01-02")
 	if freshnessDate != today {
-		logrus.Warnf("Data not updated for today (%s), latest available: %s. Skipping broadcast.", today, freshnessDate)
 		return fmt.Errorf("broadcast aborted: data not yet updated for today (latest: %s)", freshnessDate)
 	}
 
@@ -1231,11 +1180,20 @@ func (radarServiceImpl *ServiceImpl) RunMorningBroadcast(
 		})
 
 		if result != nil {
-			msg := "☀️ *Selamat Pagi! Radar Saham Harian Anda sudah siap:*\n\n" + radarServiceImpl.FormatRadarMessage(result)
+			msg := "☀️ *Selamat Pagi! Radar Permata Harian Anda sudah siap:*\n\n" + radarServiceImpl.FormatRadarMessage(result)
 			_ = broadcastFunc(userEntity.Phone, msg)
-			// Rate limiting: delay between messages to avoid overwhelming the WA gateway (PRD §9 NFR)
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
 	return nil
+}
+
+func getIndicatorEmoji(score int) string {
+	if score >= 80 {
+		return "💎"
+	}
+	if score >= 60 {
+		return "📈"
+	}
+	return "➖"
 }

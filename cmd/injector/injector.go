@@ -10,6 +10,9 @@ import (
 	"go-rich-buddy-platform/internal/cache"
 	"go-rich-buddy-platform/internal/memory"
 	"go-rich-buddy-platform/internal/memory/retention"
+	"go-rich-buddy-platform/internal/midtrans"
+	"go-rich-buddy-platform/internal/order"
+	"go-rich-buddy-platform/internal/payment"
 	"go-rich-buddy-platform/internal/radar"
 	"go-rich-buddy-platform/internal/tool"
 	"go-rich-buddy-platform/internal/tool/sectors"
@@ -115,6 +118,7 @@ var CoreModule = fx.Module("coreModule", fx.Provide(
 var ApplicationRoutesModule = fx.Module("applicationRoutes",
 	fx.Provide(
 		routes.NewPublicRoutes,
+		routes.NewPaymentRoutes,
 		routes.NewAuthenticationRoutes,
 		routes.NewProtectedRoutes,
 		routes.NewAgentRoutes,
@@ -128,13 +132,26 @@ var ApplicationRoutesModule = fx.Module("applicationRoutes",
 			agentRoutes *routes.AgentRoutes,
 			whatsappRoutes *routes.WhatsappRoutes,
 			radarRoutes *routes.RadarRoutes,
+			paymentRoutes *routes.PaymentRoutes,
 		) *routes.ApplicationRoutes {
-			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes, whatsappRoutes, radarRoutes)
+			return routes.NewApplicationRoutes(ginEngine, publicRoutes, authenticationRoutes, protectedRoutes, agentRoutes, whatsappRoutes, radarRoutes, paymentRoutes)
 		},
 	),
 	fx.Invoke(func(applicationRoutes *routes.ApplicationRoutes) {
 		applicationRoutes.Setup()
 	}),
+)
+
+var OrderModule = fx.Module("orderFeature",
+	fx.Provide(fx.Annotate(order.NewRepository, fx.As(new(order.Repository)))),
+)
+
+var MidtransModule = fx.Module("midtransFeature",
+	fx.Provide(midtrans.NewService),
+)
+
+var PaymentModule = fx.Module("paymentFeature",
+	fx.Provide(payment.NewController),
 )
 
 var UserModule = fx.Module("userFeature",

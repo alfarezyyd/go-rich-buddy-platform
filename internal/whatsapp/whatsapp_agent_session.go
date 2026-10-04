@@ -26,22 +26,20 @@ func newWhatsAppAgentSession() *WhatsAppAgentSession {
 	}
 }
 
-// CollectedResponse menggabungkan semua assistant_message frames menjadi satu
-// string yang siap dikirim ke pengguna WhatsApp.
+// CollectedResponse mengembalikan respons final dari assistant_message.
+// Hanya mengambil frame assistant_message terakhir agar intermediate/thinking frames
+// dari multi-round tool calls tidak menduplikasi balasan ke WhatsApp.
 func (s *WhatsAppAgentSession) CollectedResponse() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var sb strings.Builder
+	var lastContent string
 	for _, frame := range s.outputFrames {
-		if frame.Type == "assistant_message" && frame.Content != "" {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(frame.Content)
+		if frame.Type == "assistant_message" && strings.TrimSpace(frame.Content) != "" {
+			lastContent = frame.Content
 		}
 	}
-	return sb.String()
+	return lastContent
 }
 
 // ─── agent.Session implementation ────────────────────────────────────────────

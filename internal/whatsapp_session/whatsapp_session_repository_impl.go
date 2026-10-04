@@ -26,7 +26,7 @@ func (sessionRepository *RepositoryImpl) FindByPhone(gormTransaction *gorm.DB, p
 func (sessionRepository *RepositoryImpl) Upsert(gormTransaction *gorm.DB, sessionEntity *entity.WhatsappSession) error {
 	return gormTransaction.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "phone"}},
-		DoUpdates: clause.AssignmentColumns([]string{"current_state", "retry_count", "updated_at", "updated_by"}),
+		DoUpdates: clause.AssignmentColumns([]string{"current_state", "retry_count", "last_radar_symbols", "active_symbol", "updated_at", "updated_by"}),
 	}).Create(sessionEntity).Error
 }
 

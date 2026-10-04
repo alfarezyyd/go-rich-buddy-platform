@@ -24,6 +24,13 @@ const (
 	msgOrderInvalidChoice   = pkgi18n.MsgOrderInvalidChoice
 	msgOrderAccountNotFound = pkgi18n.MsgOrderAccountNotFound
 	msgOrderSuccess         = pkgi18n.MsgOrderSuccess
+	msgOrderQRISPrompt      = pkgi18n.MsgOrderQRISPrompt
+	msgOrderFreeSuccess     = pkgi18n.MsgOrderFreeSuccess
+	msgOrderCancelled       = pkgi18n.MsgOrderCancelled
+	msgOrderDeeplink        = pkgi18n.MsgOrderDeeplink
+	msgOrderStatusPending   = pkgi18n.MsgOrderStatusPending
+	msgOrderStatusSettled   = pkgi18n.MsgOrderStatusSettled
+	msgOrderNoPending       = pkgi18n.MsgOrderNoPending
 
 	msgRadarSahamMenu            = pkgi18n.MsgRadarSahamMenu
 	msgRadarAccountNotRegistered = pkgi18n.MsgRadarAccountNotRegistered
@@ -46,6 +53,8 @@ const (
 
 	msgDrillDownFetchError    = pkgi18n.MsgDrillDownFetchError
 	msgDrillDownInvalidTicker = pkgi18n.MsgDrillDownInvalidTicker
+	msgDrillDownNoContext     = pkgi18n.MsgDrillDownNoContext
+	msgDrillDownOutOfRange    = pkgi18n.MsgDrillDownOutOfRange
 
 	msgAgentError       = pkgi18n.MsgAgentError
 	msgAgentEmptyResult = pkgi18n.MsgAgentEmptyResult

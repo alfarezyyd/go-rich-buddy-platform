@@ -70,6 +70,6 @@ func (redisInstance *RedisInstance) Publish(topic string, message string) error 
 		return fmt.Errorf("failed to publish message to topic '%s': %w", topic, err)
 	}
 
-	logrus.Debug("📢 Published message to Redis topic '%s'\n", topic)
+	logrus.Debugf("📢 Published message to Redis topic '%s'\n", topic)
 	return nil
 }

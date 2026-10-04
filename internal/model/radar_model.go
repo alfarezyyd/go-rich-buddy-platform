@@ -1,18 +1,30 @@
 package model
 
 type RadarSignalItem struct {
-	Symbol                   string `json:"symbol"`
-	SubSector                string `json:"sub_sector"`
-	ForeignFlowScore         int    `json:"foreign_flow_score"`
-	InstitutionalBrokerScore int    `json:"institutional_broker_score"`
-	VolumeScore              int    `json:"volume_score"`
-	MomentumScore            int    `json:"momentum_score"`
-	BonusCorporateAction     int    `json:"bonus_corporate_action"`
-	BonusQuarterlyReport     int    `json:"bonus_quarterly_report"`
-	BonusInsiderBuy          int    `json:"bonus_insider_buy"`
-	CompositeScore           int    `json:"composite_score"`
-	IndicatorEmoji           string `json:"indicator_emoji"`
-	Note                     string `json:"note,omitempty"`
+	Symbol                   string  `json:"symbol"`
+	SubSector                string  `json:"sub_sector"`
+	ForeignFlowScore         int     `json:"foreign_flow_score"`
+	InstitutionalBrokerScore int     `json:"institutional_broker_score"`
+	VolumeScore              int     `json:"volume_score"`
+	MomentumScore            int     `json:"momentum_score"`
+	BonusCorporateAction     int     `json:"bonus_corporate_action"`
+	BonusQuarterlyReport     int     `json:"bonus_quarterly_report"`
+	BonusInsiderBuy          int     `json:"bonus_insider_buy"`
+	CompositeScore           int     `json:"composite_score"`
+	IndicatorEmoji           string  `json:"indicator_emoji"`
+	Note                     string  `json:"note,omitempty"`
+
+	// PRD v2 fields
+	Archetype          string  `json:"archetype,omitempty"`
+	ConfidenceLabel    string  `json:"confidence_label,omitempty"`
+	HGS                float64 `json:"hgs,omitempty"`
+	V                  float64 `json:"v,omitempty"`
+	Q                  float64 `json:"q,omitempty"`
+	I                  float64 `json:"i,omitempty"`
+	H                  float64 `json:"h,omitempty"`
+	S                  float64 `json:"s,omitempty"`
+	T                  float64 `json:"t,omitempty"`
+	DataCompleteness   float64 `json:"data_completeness,omitempty"`
 }
 
 type RadarResult struct {
@@ -32,6 +44,16 @@ type NewsItem struct {
 	URL       string `json:"url,omitempty"`
 }
 
+// CaseFileExplanation is the validated LLM JSON output per §9.1.
+type CaseFileExplanation struct {
+	PrimaryThesis        string   `json:"primary_thesis"`
+	WhyUnderFollowed     string   `json:"why_under_followed"`
+	PotentialCatalyst    string   `json:"potential_catalyst"`
+	SpecificRisks        []string `json:"specific_risks"`
+	CriticalQuestions    []string `json:"critical_questions"`
+	NotInvestmentAdvice  string   `json:"not_investment_advice"`
+}
+
 type RadarDrillDownResult struct {
 	Symbol            string                 `json:"symbol"`
 	Date              string                 `json:"date"`
@@ -42,6 +64,12 @@ type RadarDrillDownResult struct {
 	SummaryReason     string                 `json:"summary_reason"`
 	News              []NewsItem             `json:"news,omitempty"`
 	RawEvidence       map[string]interface{} `json:"raw_evidence,omitempty"`
+
+	// PRD v2 Case File Explanation
+	Archetype          string               `json:"archetype,omitempty"`
+	ConfidenceLabel    string               `json:"confidence_label,omitempty"`
+	HGS                float64              `json:"hgs,omitempty"`
+	ExplanationDetails *CaseFileExplanation `json:"explanation_details,omitempty"`
 }
 
 type SetRadarPreferenceRequest struct {

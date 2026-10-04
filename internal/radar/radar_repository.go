@@ -28,4 +28,15 @@ type Repository interface {
 	GetAllActiveWatchlistSymbols(tx *gorm.DB) ([]string, error)
 
 	LogRequest(tx *gorm.DB, log *entity.RadarRequestLog) error
+
+	// PRD v2 Methods
+	SaveDiscoveryCandidates(tx *gorm.DB, candidates []entity.DiscoveryCandidateDaily) error
+	SaveGateResults(tx *gorm.DB, gates []entity.GateResultDaily) error
+	SavePillarScores(tx *gorm.DB, scores []entity.PillarScoreDaily) error
+	GetPillarScoresByDate(tx *gorm.DB, date string) ([]entity.PillarScoreDaily, error)
+	GetTopPillarScoresBySubSector(tx *gorm.DB, date string, subSector string, limit int) ([]entity.PillarScoreDaily, error)
+	GetPillarScoresBySymbols(tx *gorm.DB, date string, symbols []string) ([]entity.PillarScoreDaily, error)
+	SaveCaseFile(tx *gorm.DB, caseFile *entity.CaseFileDaily) error
+	GetCaseFile(tx *gorm.DB, date string, symbol string) (*entity.CaseFileDaily, error)
+	LogRadarPick(tx *gorm.DB, pick *entity.RadarPickLog) error
 }

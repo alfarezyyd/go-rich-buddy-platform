@@ -57,9 +57,12 @@ func (userRepositoryImpl *RepositoryImpl) FindById(gormTransaction *gorm.DB, use
 		Preload("AuditLog", func(gormTransaction *gorm.DB) *gorm.DB {
 			return gormTransaction.Where("user_id = ?", userId).Limit(10)
 		}).
-		Where("id = ?", userId).Find(&userEntity).Error
+		Where("id = ?", userId).First(&userEntity).Error
+	if err != nil {
+		return nil, err
+	}
 
-	return &userEntity, err
+	return &userEntity, nil
 }
 
 func (userRepositoryImpl *RepositoryImpl) FindByIdentifier(gormTransaction *gorm.DB, userIdentifier string) (*entity.User, error) {
@@ -68,13 +71,19 @@ func (userRepositoryImpl *RepositoryImpl) FindByIdentifier(gormTransaction *gorm
 		Where("email = ?", userIdentifier).
 		Or("username = ?", userIdentifier).
 		First(&userEntity).Error
-	return &userEntity, err
+	if err != nil {
+		return nil, err
+	}
+	return &userEntity, nil
 }
 
 func (userRepositoryImpl *RepositoryImpl) FindByPhone(gormTransaction *gorm.DB, phone string) (*entity.User, error) {
 	var userEntity entity.User
 	err := gormTransaction.Where("phone = ?", phone).First(&userEntity).Error
-	return &userEntity, err
+	if err != nil {
+		return nil, err
+	}
+	return &userEntity, nil
 }
 
 func (userRepositoryImpl *RepositoryImpl) FindByName(currencyName string) *entity.User {

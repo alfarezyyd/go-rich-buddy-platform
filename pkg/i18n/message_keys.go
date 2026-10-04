@@ -18,10 +18,17 @@ const (
 	MsgRegisterSuccess           = "register_success"
 
 	// Order
-	MsgOrderMenu           = "order_menu"
-	MsgOrderInvalidChoice  = "order_invalid_choice"
+	MsgOrderMenu            = "order_menu"
+	MsgOrderInvalidChoice   = "order_invalid_choice"
 	MsgOrderAccountNotFound = "order_account_not_found"
-	MsgOrderSuccess        = "order_success"
+	MsgOrderSuccess         = "order_success"
+	MsgOrderQRISPrompt      = "order_qris_prompt"
+	MsgOrderFreeSuccess     = "order_free_success"
+	MsgOrderCancelled       = "order_cancelled"
+	MsgOrderDeeplink        = "order_deeplink"
+	MsgOrderStatusPending   = "order_status_pending"
+	MsgOrderStatusSettled   = "order_status_settled"
+	MsgOrderNoPending       = "order_no_pending"
 
 	// Radar Saham Menu
 	MsgRadarSahamMenu          = "radar_saham_menu"
@@ -49,6 +56,8 @@ const (
 	// Drill-down
 	MsgDrillDownFetchError    = "drilldown_fetch_error"
 	MsgDrillDownInvalidTicker = "drilldown_invalid_ticker"
+	MsgDrillDownNoContext     = "drilldown_no_context"
+	MsgDrillDownOutOfRange    = "drilldown_out_of_range"
 
 	// Agent / Stock Inquiry
 	MsgAgentError       = "agent_error"

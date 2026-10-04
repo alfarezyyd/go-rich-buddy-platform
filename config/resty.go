@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"fmt"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -19,6 +21,7 @@ type RestyConfig struct {
 	Timeout          time.Duration
 	AgentRouter      HttpTarget
 	Sectors          HttpTarget
+	Midtrans         HttpTarget
 }
 
 type RestyModule struct {
@@ -26,6 +29,7 @@ type RestyModule struct {
 	restyAgentRouter     *resty.Client
 	restyWhatsappGateway *resty.Client
 	restySectors         *resty.Client
+	restyMidtrans        *resty.Client
 }
 
 func NewRestyConfig(viperConfig *viper.Viper) *RestyConfig {
@@ -33,7 +37,10 @@ func NewRestyConfig(viperConfig *viper.Viper) *RestyConfig {
 	agentRouterAuthToken := viperConfig.GetString("AGENT_APIKEY")
 	sectorsEndpoint := viperConfig.GetString("SECTORS_API_URL")
 	sectorsAuthToken := viperConfig.GetString("SECTORS_API_KEY")
-
+	midtransBaseUrl := viperConfig.GetString("MIDTRANS_BASE_URL")
+	midtransAPIKey := viperConfig.GetString("MIDTRANS_API_KEY")
+	encodeMidtransAPIKey := base64.StdEncoding.EncodeToString([]byte(midtransAPIKey))
+	fmt.Println("Midtrans API Key:", encodeMidtransAPIKey)
 	return &RestyConfig{
 		RetryCount:       3,
 		RetryWaitTime:    100 * time.Millisecond,
@@ -46,6 +53,10 @@ func NewRestyConfig(viperConfig *viper.Viper) *RestyConfig {
 		Sectors: HttpTarget{
 			Endpoint:  sectorsEndpoint,
 			AuthToken: sectorsAuthToken,
+		},
+		Midtrans: HttpTarget{
+			Endpoint:  midtransBaseUrl,
+			AuthToken: encodeMidtransAPIKey,
 		},
 	}
 }
@@ -66,6 +77,11 @@ func NewRestyModule(restyConfig *RestyConfig) *RestyModule {
 		SetBaseURL(restyConfig.Sectors.Endpoint).
 		SetHeader("Authorization", restyConfig.Sectors.AuthToken)
 
+	restyModule.restyMidtrans = restyModule.getBaseResty().
+		SetBaseURL(restyConfig.Midtrans.Endpoint).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Authorization", fmt.Sprintf("Basic %s", restyConfig.Midtrans.AuthToken))
+
 	return restyModule
 }
 
@@ -84,4 +100,8 @@ func (restyModule *RestyModule) GetRestyWhatsappGateway() *resty.Client {
 
 func (restyModule *RestyModule) GetRestySectors() *resty.Client {
 	return restyModule.restySectors
+}
+
+func (restyModule *RestyModule) GetRestyMidtrans() *resty.Client {
+	return restyModule.restyMidtrans
 }

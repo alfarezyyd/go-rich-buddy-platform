@@ -8,4 +8,6 @@ import (
 
 type Service interface {
 	HandleIncoming(ginContext *gin.Context, textMessage model.TextMessage) error
+	SendDirectMessage(phone, message string) error
+	SendMainMenu(phone string) error
 }

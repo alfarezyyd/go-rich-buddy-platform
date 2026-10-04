@@ -53,7 +53,35 @@
   },
   {
     "id": "order_success",
-    "translation": "🎉 Anda memilih paket *{{.Tier}}*.\n\n(Simulasi: Pembayaran sukses! Saldo kredit Anda sekarang: {{.Credits}} kredit)"
+    "translation": "🎉 Pembayaran sukses untuk paket *{{.Tier}}*!\nSaldo kredit Anda sekarang: {{.Credits}} kredit."
+  },
+  {
+    "id": "order_free_success",
+    "translation": "🎉 Anda memilih paket *{{.Tier}}*.\nSaldo kredit Anda sekarang: {{.Credits}} kredit."
+  },
+  {
+    "id": "order_qris_prompt",
+    "translation": "🧾 *Tagihan Pembayaran RichBuddy*\n\nPaket: *{{.PackageName}}*\nHarga: *Rp {{.Amount}}*\nOrder ID: `{{.OrderID}}`\n\nSilakan scan kode QRIS di atas untuk membayar.\n{{.DeeplinkInfo}}Setelah pembayaran berhasil, saldo kredit akan bertambah otomatis.\n_(Ketik *batal* untuk membatalkan pesanan)_"
+  },
+  {
+    "id": "order_deeplink",
+    "translation": "📱 Atau bayar langsung via aplikasi:\n{{.URL}}\n\n"
+  },
+  {
+    "id": "order_cancelled",
+    "translation": "Pesanan `{{.OrderID}}` telah berhasil dibatalkan. Kembali ke menu utama..."
+  },
+  {
+    "id": "order_status_pending",
+    "translation": "Status pesanan `{{.OrderID}}`: *PENDING*\nPaket: *{{.PackageName}}*\nTagihan: *Rp {{.Amount}}*\n\nSilakan selesaikan pembayaran melalui QRIS atau link yang telah diberikan sebelumnya.\n_(Ketik *batal* untuk membatalkan pesanan)_"
+  },
+  {
+    "id": "order_status_settled",
+    "translation": "🎉 Pesanan `{{.OrderID}}` sudah *LUNAS*!\nTier: *{{.Tier}}*\nSaldo kredit: {{.Credits}} kredit."
+  },
+  {
+    "id": "order_no_pending",
+    "translation": "Tidak ada tagihan atau pesanan pending saat ini. Silakan pilih menu lain di bawah:"
   },
   {
     "id": "radar_saham_menu",
@@ -125,6 +153,14 @@
     "translation": "❌ Kode saham *{{.Symbol}}* tidak ditemukan dalam data hari ini.\n\nPastikan kode saham yang Anda masukkan benar (contoh: BBCA, BMRI, TLKM). Ketik *menu* untuk kembali ke Radar Saham."
   },
   {
+    "id": "drilldown_no_context",
+    "translation": "⚠️ Tidak ada data radar aktif di sesi ini.\nSilakan kembali ke Radar Saham dan jalankan radar terlebih dahulu, lalu balas angka untuk melihat detail saham."
+  },
+  {
+    "id": "drilldown_out_of_range",
+    "translation": "⚠️ Pilihan tidak valid. Balas angka antara *1* sampai *{{.Max}}* sesuai daftar saham di atas, atau ketik kode saham langsung (contoh: BBCA)."
+  },
+  {
     "id": "agent_error",
     "translation": "Maaf, terjadi kendala saat menganalisis pertanyaan Anda. Silakan tanyakan hal lain seputar saham rekomendasi atau ketik *menu*."
   },
@@ -155,5 +191,25 @@
   {
     "id": "optin_invalid_choice",
     "translation": "Pilihan tidak valid. Balas 1 untuk Subsektor, 2 untuk Watchlist, atau 3 untuk Manual."
+  },
+  {
+    "id": "memory_empty",
+    "translation": "Belum ada preferensi atau memori yang tersimpan. Saat kamu mengobrol dengan RichBuddy, ia akan mempelajari preferensimu secara otomatis.\n\n_(RichBuddy menyimpan ringkasan percakapan dan preferensimu untuk personalisasi. Ketik 'memori saya' untuk melihat atau menghapusnya.)_"
+  },
+  {
+    "id": "memory_forget_invalid",
+    "translation": "Sebutkan apa yang ingin dilupakan. Mis.: *lupakan pref.tone* atau *lupakan interest.topics*."
+  },
+  {
+    "id": "memory_forgot_confirm",
+    "translation": "✅ Selesai! Preferensi tersebut telah dihapus dari memori."
+  },
+  {
+    "id": "chat_history_deleted",
+    "translation": "✅ Riwayat chat dan ringkasan percakapanmu telah dihapus."
+  },
+  {
+    "id": "all_memory_deleted",
+    "translation": "✅ Semua memori, preferensi, progres belajar, dan event interaksimu telah dihapus. RichBuddy akan mulai dari awal."
   }
 ]

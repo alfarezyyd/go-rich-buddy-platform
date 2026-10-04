@@ -346,3 +346,7 @@ func (agentService *ServiceImpl) handleMaxIterationsReached(ctx context.Context,
 	})
 	return nil
 }
+
+func (agentService *ServiceImpl) Classify(ctx context.Context, userMessage string) AgentMode {
+	return agentService.classifier.Classify(ctx, userMessage)
+}
