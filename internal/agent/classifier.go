@@ -4,6 +4,7 @@ import (
 	"context"
 	"go-rich-buddy-platform/client"
 	"go-rich-buddy-platform/internal/model"
+	"go-rich-buddy-platform/pkg/logger"
 	"regexp"
 	"strings"
 
@@ -49,7 +50,6 @@ var knownTickers = map[string]struct{}{
 }
 
 var analystKeywords = []string{
-
 	"harga", "price", "closing", "opening", "laporan", "report", "dividend", "dividen",
 	"yield", "top gainer", "top loser", "gainers", "losers", "market cap",
 	"kapitalisasi", "valuasi", "valuation", "p/e", "per", "pbv", "p/bv",
@@ -58,7 +58,7 @@ var analystKeywords = []string{
 	"cash flow", "saham", "emiten", "ticker", "idx", "ihsg", "bursa",
 
 	"bandingkan", "perbandingan", "mana yang lebih", "lebih murah", "lebih mahal",
-	"lebih tinggi", "lebih bagus", "simulasi", "target price", "prospek angka",
+	"lebih tinggi", "lebih bagus", "simulasi", "target price", "prospek angka", "analisis angka", "analisis fundamental", "analisis teknikal", "analisis saham", "analisis",
 }
 
 var regularGreetings = []string{
@@ -134,12 +134,12 @@ func (hybridClassifier *HybridClassifier) matchRule(userMessage string) (AgentMo
 		}
 	}
 
-	if hasRegularSignal && !hasAnalystSignal {
-		return ModeRegular, true
+	if hasAnalystSignal {
+		return ModeAnalyst, true
 	}
 
-	if hasAnalystSignal && !hasRegularSignal {
-		return ModeAnalyst, true
+	if hasRegularSignal {
+		return ModeRegular, true
 	}
 
 	return "", false
@@ -148,14 +148,14 @@ func (hybridClassifier *HybridClassifier) matchRule(userMessage string) (AgentMo
 func (hybridClassifier *HybridClassifier) Classify(ctx context.Context, userMessage string) AgentMode {
 
 	if mode, ok := hybridClassifier.matchRule(userMessage); ok {
-		logrus.WithFields(logrus.Fields{
+		logger.WithFields(logrus.Fields{
 			"source": "rule_based",
 			"mode":   mode,
 		}).Debug("Classified mode via rule-based")
 		return mode
 	}
 
-	logrus.WithField("user_message", userMessage).Debug("Rule-based ambiguous, using LLM classifier fallback")
+	logger.WithField("user_message", userMessage).Debug("Rule-based ambiguous, using LLM classifier fallback")
 
 	if hybridClassifier.agentClient == nil {
 		logrus.Warn("LLM client not configured in classifier, defaulting to analyst per BR-2.5")

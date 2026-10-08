@@ -89,7 +89,7 @@ func (agentService *ServiceImpl) RunSession(ctx context.Context, session Session
 
 	for {
 		userMessage, isValid := session.NextUserMessage(ctx)
-		fmt.Println("Received user message:", userMessage)
+		logrus.Debugf("Received user message: %s", userMessage)
 		if !isValid {
 			return
 		}
@@ -345,4 +345,8 @@ func (agentService *ServiceImpl) handleMaxIterationsReached(ctx context.Context,
 		Content: fallbackContent,
 	})
 	return nil
+}
+
+func (agentService *ServiceImpl) Classify(ctx context.Context, userMessage string) AgentMode {
+	return agentService.classifier.Classify(ctx, userMessage)
 }

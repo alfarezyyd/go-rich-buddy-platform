@@ -36,11 +36,17 @@ func main() {
 		injector.CoreModule,
 		injector.ApplicationRoutesModule,
 		injector.UserModule,
+		injector.RadarModule,
 		injector.ToolModule,
 		injector.AgentModule,
 		injector.ValidatorModule,
 		injector.WhatsappGatewayModule,
 		injector.WhatsappSessionModule,
+		injector.CacheModule,
+		injector.MemoryModule,
+		injector.OrderModule,
+		injector.MidtransModule,
+		injector.PaymentModule,
 		fx.Invoke(Run),
 	)
 

@@ -14,6 +14,8 @@ type ApplicationRoutes struct {
 	ProtectedRoutes      *ProtectedRoutes
 	AgentRoutes          *AgentRoutes
 	WhatsappRoutes       *WhatsappRoutes
+	RadarRoutes          *RadarRoutes
+	PaymentRoutes        *PaymentRoutes
 }
 
 func NewApplicationRoutes(
@@ -22,7 +24,10 @@ func NewApplicationRoutes(
 	authenticationRoutes *AuthenticationRoutes,
 	protectedRoutes *ProtectedRoutes,
 	agentRoutes *AgentRoutes,
-	whatsappRoutes *WhatsappRoutes) *ApplicationRoutes {
+	whatsappRoutes *WhatsappRoutes,
+	radarRoutes *RadarRoutes,
+	paymentRoutes *PaymentRoutes,
+) *ApplicationRoutes {
 	parentRouterGroup := ginEngine.Group("/api/")
 	parentRouterGroup.Use(middleware.RequestMetaMiddleware())
 	return &ApplicationRoutes{
@@ -33,6 +38,8 @@ func NewApplicationRoutes(
 		ProtectedRoutes:      protectedRoutes,
 		AgentRoutes:          agentRoutes,
 		WhatsappRoutes:       whatsappRoutes,
+		RadarRoutes:          radarRoutes,
+		PaymentRoutes:        paymentRoutes,
 	}
 }
 
@@ -40,8 +47,14 @@ func (applicationRoutes *ApplicationRoutes) Setup() {
 	if applicationRoutes.PublicRoutes != nil {
 		applicationRoutes.PublicRoutes.Setup(applicationRoutes.RouterGroup)
 	}
+	if applicationRoutes.PaymentRoutes != nil {
+		applicationRoutes.PaymentRoutes.Setup(applicationRoutes.RouterGroup)
+	}
 	if applicationRoutes.WhatsappRoutes != nil {
 		applicationRoutes.WhatsappRoutes.Setup(applicationRoutes.RouterGroup)
+	}
+	if applicationRoutes.RadarRoutes != nil {
+		applicationRoutes.RadarRoutes.Setup(applicationRoutes.RouterGroup)
 	}
 	if applicationRoutes.AuthenticationRoutes != nil {
 		applicationRoutes.AuthenticationRoutes.Setup(applicationRoutes.RouterGroup)
