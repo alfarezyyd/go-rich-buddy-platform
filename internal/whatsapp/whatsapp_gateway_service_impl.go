@@ -102,9 +102,7 @@ func (whatsappGatewayService *ServiceImpl) HandleIncoming(ginContext *gin.Contex
 
 	phoneNumber := strings.Split(textMessage.Payload.From, "@")[0]
 	logrus.Debugf("Incoming WhatsApp message from: %s", phoneNumber)
-	if phoneNumber != "6289637577001" {
-		return nil
-	}
+
 	payloadBody := strings.TrimSpace(strings.ToLower(textMessage.Payload.Body))
 	rawBody := strings.TrimSpace(textMessage.Payload.Body)
 	waMessageID := textMessage.Payload.Id
